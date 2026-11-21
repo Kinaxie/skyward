@@ -4,7 +4,7 @@ use crate::app::{
 };
 use crate::lang::{Lang, Text};
 use crate::tr;
-use jiff::civil::DateTime;
+use jiff::civil::{DateTime, Weekday};
 use jiff::tz::TimeZone;
 use jiff::Timestamp;
 use skyward_info::{Battery, Charge, Cpu, PatchLevel, Storage};
@@ -781,6 +781,78 @@ fn local(unix: i64, zone: usize) -> DateTime {
     let unix = unix.clamp(Timestamp::MIN.as_second(), Timestamp::MAX.as_second());
     let at = Timestamp::from_second(unix).expect("a time within the calendar");
     at.to_zoned(rules(zone).clone()).datetime()
+}
+
+/// The clock as the pages tell it: in twelve hours when asked, without
+/// the half of the day beside it.
+pub fn clock_shown(clock: &str, hour12: bool) -> String {
+    if !hour12 {
+        return clock.to_string();
+    }
+    let Some((hour, minute)) = clock.split_once(':') else { return clock.to_string() };
+    let Ok(h) = hour.parse::<u32>() else { return clock.to_string() };
+    format!("{}:{minute}", match h % 12 { 0 => 12, n => n })
+}
+
+/// The half of the day a clock told in twelve hours stands in.
+pub fn period(clock: &str, l: Lang) -> &'static str {
+    let hour = clock.split_once(':').and_then(|(h, _)| h.parse::<u32>().ok()).unwrap_or(0);
+    match hour < 12 {
+        true => l.pick(["上午", "上午", "AM"]),
+        false => l.pick(["下午", "下午", "PM"]),
+    }
+}
+
+/// The name of a clock's format, twelve hours or twenty-four.
+pub fn hour12_name(l: Lang, on: bool) -> &'static str {
+    match on {
+        true => l.pick(["12 小时制", "12 小時制", "12-hour"]),
+        false => l.pick(["24 小时制", "24 小時制", "24-hour"]),
+    }
+}
+
+/// The name of a date the charging screen can show, by its place in
+/// [`crate::app::AOD_DATES`].
+pub fn aod_date_name(l: Lang, at: usize) -> &'static str {
+    match at {
+        1 => l.pick(["完整日期", "完整日期", "The whole date"]),
+        2 => l.pick(["不显示日期", "不顯示日期", "No date"]),
+        _ => l.pick(["月日、星期与农历", "月日、星期與農曆", "Month, day, weekday and lunar"]),
+    }
+}
+
+/// The date at a Unix time in the zone at `zone`, as the charging screen
+/// shows it, by its place in [`crate::app::AOD_DATES`].
+pub fn aod_date(l: Lang, unix: i64, zone: usize, at: usize) -> String {
+    let d = local(unix, zone);
+    let weekday = match d.weekday() {
+        Weekday::Monday => l.pick(["周一", "週一", "Mon"]),
+        Weekday::Tuesday => l.pick(["周二", "週二", "Tue"]),
+        Weekday::Wednesday => l.pick(["周三", "週三", "Wed"]),
+        Weekday::Thursday => l.pick(["周四", "週四", "Thu"]),
+        Weekday::Friday => l.pick(["周五", "週五", "Fri"]),
+        Weekday::Saturday => l.pick(["周六", "週六", "Sat"]),
+        Weekday::Sunday => l.pick(["周日", "週日", "Sun"]),
+    };
+    if at == 2 {
+        return String::new();
+    }
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let (year, month, day) = (d.year(), d.month(), d.day());
+    match l {
+        Lang::En => match at {
+            1 => format!("{month} {day}, {year}, {weekday}", month = MONTHS[(month - 1) as usize]),
+            _ => format!("{month} {day}, {weekday}", month = MONTHS[(month - 1) as usize]),
+        },
+        _ => {
+            let whole = if at == 1 { format!("{year}年") } else { String::new() };
+            let lunar = if at == 0 { crate::lunar::text(year.into(), month as u32, day as u32, l == Lang::Hant) } else { None };
+            match lunar {
+                Some(lunar) => format!("{whole}{month}月{day}日{weekday} {lunar}"),
+                None => format!("{whole}{month}月{day}日{weekday}"),
+            }
+        }
+    }
 }
 
 /// The day a Unix time falls on in the zone at `zone` in [`TIME_ZONES`],

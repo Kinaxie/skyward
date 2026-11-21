@@ -13,6 +13,9 @@ impl App {
     /// is told to go off.
     pub fn panel(&self, now: u64) -> Option<f32> {
         if !self.display_on {
+            if self.aod.is_some_and(|since| now.saturating_sub(since) < AOD_MS) {
+                return Some(AOD_LIGHT);
+            }
             return self.darkening.filter(|_| self.curtain.level(now) > 0.0);
         }
         let (full, level) = (self.state.brightness, self.bright.level(now));
@@ -35,6 +38,7 @@ impl App {
             self.darkening = None;
             self.curtain.set(true, now);
         }
+        self.aod = None;
         self.woke_at = Some(now);
         self.stir(now);
     }
@@ -97,6 +101,7 @@ impl App {
         self.darkening = self.panel(now);
         self.curtain.set(false, now);
         self.display_on = false;
+        self.aod = None;
         self.bright = full_brightness();
         match std::mem::replace(&mut self.drag, Drag::Idle) {
             Drag::Confirm { .. } => {
@@ -390,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn the_charging_screen_shows_the_level_over_a_tide_of_light() {
+    fn the_charging_screen_shows_the_time_over_black() {
         let (f, i) = (fonts(), DeviceInfo { battery: Some(battery_at(64, Charge::Charging)), ..info() });
         let mut app = App::new(Screen::Home, W, H, PPD);
         app.tick(0);
@@ -404,8 +409,8 @@ mod tests {
             [c.data[k], c.data[k + 1], c.data[k + 2]]
         };
         assert_eq!(px(0, 0), [0, 0, 0], "on black");
-        let foot = px(W / 2, H - 4);
-        assert!(foot[2] > 40 && foot[2] > foot[0] * 4 && foot[2] > foot[1] * 2, "the tide's light at the foot is blue: {foot:?}");
+        assert!((0..W).any(|x| px(x, H / 2)[0] > 120), "the clock stands in the middle");
+        assert_eq!(px(W / 2, H - 4), [0, 0, 0], "and nothing lights the foot");
     }
 
     #[test]

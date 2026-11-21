@@ -12,6 +12,7 @@ pub mod geom;
 pub mod glow;
 pub mod icons;
 pub mod lang;
+pub mod lunar;
 pub mod motion;
 pub mod pages;
 pub mod search;

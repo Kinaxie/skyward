@@ -119,6 +119,7 @@ impl App {
             Cap::Enter => ed.newline(),
             Cap::Shift => self.state.layer = if layer == Layer::Shifted { Layer::Letters } else { Layer::Shifted },
             Cap::Show(shown) => self.state.layer = shown,
+            Cap::Hide => {}
         }
         self.edits += 1;
         // The keyboard stays as it was while its keys do.
@@ -160,6 +161,7 @@ mod tests {
     fn renaming_takes_the_name_typed() {
         let (f, i) = (fonts(), info());
         let mut app = in_sdcard(&f, &i);
+        app.state.vibrate = false;
         hold_entry(&mut app, &f, &i, 1);
         tap(&mut app, &f, &i, Action::RenameEntry);
         assert_eq!(app.screen(), Screen::Rename);
@@ -353,6 +355,7 @@ mod tests {
     fn a_name_the_folder_cannot_take_is_turned_down_before_renaming() {
         let (f, i) = (fonts(), info());
         let mut app = in_sdcard(&f, &i);
+        app.state.vibrate = false;
         hold_entry(&mut app, &f, &i, 1);
         tap(&mut app, &f, &i, Action::RenameEntry);
         let refused =

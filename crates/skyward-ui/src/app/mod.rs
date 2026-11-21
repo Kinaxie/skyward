@@ -80,6 +80,10 @@ pub use update::*;
 pub use wipe::*;
 pub use wlan::*;
 
+/// The dates the charging screen can show, by name: the month and day with
+/// the lunar date, the whole date, or none.
+pub const AOD_DATES: [&str; 3] = ["lunar", "full", "none"];
+
 /// The pages of the recovery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
@@ -137,6 +141,12 @@ pub enum Screen {
     PartWork,
     Language,
     TimeZone,
+    /// Twelve hours or twenty-four, for the clock everywhere.
+    TimeFormat,
+    /// The date the charging screen shows.
+    AodDate,
+    /// What flashing and decrypting have said, and what this phone is.
+    Output,
     /// Saving the logs, as a bug report asks for them.
     Logs,
     /// Where an update the system installed stands, and merging it into
@@ -267,6 +277,10 @@ pub enum Action {
     ScreenOff(usize),
     /// Keep the time zone at this place in [`TIME_ZONES`].
     TimeZone(usize),
+    /// Tell the clock in twelve hours, rather than in twenty-four.
+    Hour12(bool),
+    /// Show this date on the charging screen, by its place in [`AOD_DATES`].
+    AodDate(usize),
     /// Speak this language.
     Language(Lang),
     /// Tick or untick a part of the backup, by its place in
@@ -295,6 +309,8 @@ pub enum Action {
     SystemSize(usize),
     /// A key of the on-screen keyboard.
     Type(Cap),
+    /// Tuck the on-screen keyboard away, or bring it back.
+    Keyboard(bool),
     /// A key of the row above the keyboard, the terminal's or the editor's.
     TermKey(TermKey),
     /// Empty the search field.
@@ -648,6 +664,13 @@ enum Press {
 }
 
 const TOAST_MS: u64 = 2000;
+/// How long the always-on screen stays after a touch on the dark panel, and
+/// how brightly the panel is lit for it.
+const AOD_MS: u64 = 4000;
+const AOD_LIGHT: f32 = 0.05;
+/// How long a message takes to come in, and to go away, in milliseconds.
+const TOAST_IN_MS: u64 = 180;
+const TOAST_OUT_MS: u64 = 180;
 /// How long a text field's cursor shows and then hides, as the stock
 /// fields blink it.
 const BLINK_MS: u64 = 500;
@@ -1064,6 +1087,10 @@ pub struct App {
     /// The keys are working the pages: the control they are on is lit. A
     /// touch puts the light out, and a volume key brings it back.
     keys: bool,
+    /// The pages started on the decrypt page: once it opens the data
+    /// partition with nothing to ask, they go on to the home page by
+    /// themselves, so a phone without a screen lock never stops there.
+    started_on_decrypt: bool,
     /// The button held down, and what holding it does.
     button: Option<(Key, Press)>,
     /// The first of the power key and volume down gone down, waiting for
@@ -1107,7 +1134,8 @@ pub struct App {
     unsaved_warned: Option<u64>,
     /// The About page field's dither, made for the screen once.
     dither: Option<glow::Dither>,
-    toast: Option<(String, u64)>,
+    /// A message shown, since when, and until when.
+    toast: Option<(String, u64, u64)>,
     drag: Drag,
     tracker: Tracker,
     /// The page gliding on after a flick.
@@ -1148,6 +1176,11 @@ pub struct App {
     /// off, under the backlight held then, and comes up as the panel lights.
     curtain: Fade,
     darkening: Option<f32>,
+    /// The keyboard sliding down out of the way, or back up.
+    keys_slide: Option<Spring>,
+    /// The always-on screen a touch on the dark panel brought up, since
+    /// when.
+    aod: Option<u64>,
     /// The charging screen, from when a cable goes in until it has gone,
     /// with the level and what the charger does drawn for it, and the
     /// screen it is drawn on while it comes or goes over the page.
@@ -1205,6 +1238,7 @@ impl App {
             // The touchscreen may run from the partitions fastboot leaves
             // out, so its page starts worked with the keys.
             keys: start == Screen::Fastboot,
+            started_on_decrypt: start == Screen::Decrypt,
             button: None,
             chord: None,
             seek: None,
@@ -1239,6 +1273,8 @@ impl App {
             bright: full_brightness(),
             curtain: Fade::shown(BRIGHTEN, DARKEN),
             darkening: None,
+            keys_slide: None,
+            aod: None,
             charging: None,
             charge_art: None,
             charge_canvas: None,
@@ -1264,6 +1300,23 @@ impl App {
 
     /// The screen's corners are rounded to `radius` pixels: so are the
     /// leading corners of a page sliding over another.
+    /// Tuck the on-screen keyboard away or bring it back, sliding it from
+    /// where it stands now.
+    pub(super) fn slide_keys(&mut self, hidden: bool, now: u64) {
+        if self.state.keys_hidden == hidden {
+            return;
+        }
+        self.state.keys_hidden = hidden;
+        let settle = self.keys_settle();
+        let rest = if hidden { settle } else { 0.0 };
+        self.keys_slide = Some(Spring::new(now, self.state.keys_drop - rest, 0.0, 0.26));
+        self.refresh();
+    }
+
+    fn keys_settle(&self) -> f32 {
+        widgets::keyboard_hidden(&self.theme())
+    }
+
     pub fn set_screen_corners(&mut self, radius: f32) {
         self.corners = radius;
     }
@@ -1311,7 +1364,10 @@ impl App {
                 || self.morph.is_some()
                 || self.turn.is_some()
                 || self.row_press.is_some_and(|p| p.changing(now) || p.gone(now))
-                || self.glowing());
+                || self.glowing()
+                || self.keys_slide.is_some()
+                || (self.aod.is_some() && self.display_on)
+                || self.toast.as_ref().is_some_and(|(_, at, until)| now < *at + TOAST_IN_MS || now + TOAST_OUT_MS > *until));
         // The content going dark or coming up, and the charging screen's
         // tide, move a frame at a time while the panel is lit.
         let lit = self.panel(now).is_some();
@@ -1331,7 +1387,7 @@ impl App {
         };
         let blink = self.blink_at(now).filter(|_| self.display_on).map(|(_, next)| next);
         let chord = self.chord.map(|(_, at)| at + CHORD_MS);
-        [self.toast.as_ref().map(|t| t.1), easing, self.idle_due(), held, repeat, blink, darkens, chord].into_iter().flatten().min()
+        [self.toast.as_ref().map(|t| t.2), self.aod.map(|s| s + AOD_MS), easing, self.idle_due(), held, repeat, blink, darkens, chord].into_iter().flatten().min()
     }
 
     /// Whether a text field's cursor shows at `now`, and when it next turns;
@@ -1409,7 +1465,7 @@ impl App {
         if self.curtain.moving(now) || self.charging.is_some() {
             self.dirty = true;
         }
-        if self.toast.as_ref().is_some_and(|m| now >= m.1) {
+        if self.toast.as_ref().is_some_and(|m| now >= m.2) {
             self.toast = None;
             self.dirty = true;
         }
@@ -1457,6 +1513,21 @@ impl App {
             self.dirty = true;
             if b.at(now).1 {
                 self.bounce = None;
+            }
+        }
+        if self.aod.is_some_and(|since| now >= since + AOD_MS) {
+            self.aod = None;
+            self.dirty = true;
+        }
+        if let Some(spring) = self.keys_slide {
+            let (offset, done) = spring.at(now);
+            let settle = self.keys_settle();
+            let drop = if self.state.keys_hidden { settle + offset } else { offset };
+            self.state.keys_drop = drop.clamp(0.0, settle);
+            self.refresh();
+            if done {
+                self.state.keys_drop = if self.state.keys_hidden { settle } else { 0.0 };
+                self.keys_slide = None;
             }
         }
         if let Some((target, spring)) = self.seek {

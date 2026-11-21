@@ -10,6 +10,8 @@ ab_glyph = "0.2.32"
 # The stock status bar's outlines are filled as glyphs are.
 ab_glyph_rasterizer = "0.1.10"
 icu_locale_core = { version = "2.4.0", features = ["alloc"] }
+# The Chinese lunar calendar, worked out rather than tabulated.
+calendrical_calculations = "0.2.0"
 # The recovery carries no time zone files, so the rules come built in.
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # Screenshots are saved as PNG.

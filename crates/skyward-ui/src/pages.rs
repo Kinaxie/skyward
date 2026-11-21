@@ -2,7 +2,7 @@ use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
     FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, Pick, Place, Rows, Screen,
     SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe, ADDABLE,
-    BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
+    AOD_DATES, BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
     USB_DRIVE_WANTED, WIPES, installs, starting,
 };
 use crate::canvas::Canvas;
@@ -91,6 +91,9 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::PartWork => part_work(cx),
         Screen::Language => language(cx),
         Screen::TimeZone => time_zone(cx),
+        Screen::TimeFormat => time_format(cx),
+        Screen::AodDate => aod_date_page(cx),
+        Screen::Output => output(cx),
         Screen::Logs => logs(cx),
         Screen::Update => update(cx),
         Screen::SkywardUpdate => skyward_update(cx),
@@ -166,6 +169,8 @@ const ABOUT: Text = ["关于本机", "關於手機", "About phone"];
 const SPECS: Text = ["全部参数与信息", "全部規格與資訊", "All specs"];
 const LOGS: Text = ["导出日志", "匯出記錄", "Export logs"];
 const SCREEN_TIMEOUT: Text = ["息屏时间", "螢幕自動關閉", "Screen timeout"];
+const TIME_FORMAT: Text = ["时间格式", "時間格式", "Time format"];
+const AOD_DATE: Text = ["息屏日期", "息屏日期", "Always-on date"];
 const UPDATE: Text = ["系统更新", "系統更新", "System update"];
 const SKYWARD_UPDATE: Text = ["Skyward 更新", "Skyward 更新", "Skyward update"];
 const FILES: Text = ["文件管理", "檔案管理", "File manager"];
@@ -374,8 +379,13 @@ pub fn settings(cx: &Ctx) -> Frame {
     let general = widgets::list(&mut c, t, f, y, &[
         Row::new(l.pick(LANGUAGE)).icon(BLUE, Icon::Globe).trail(Trail::Value(l.name())),
         Row::new(l.pick(TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
+        Row::new(l.pick(TIME_FORMAT)).icon(BLUE, Icon::Clock).trail(Trail::Value(fmt::hour12_name(l, s.hour12))),
+        Row::new(l.pick(AOD_DATE)).icon(SLATE, Icon::Clock).trail(Trail::Value(fmt::aod_date_name(l, s.aod_date))),
     ]);
-    out.extend(hits(&general.rows, &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone)]));
+    out.extend(hits(
+        &general.rows,
+        &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone), Action::Open(Screen::TimeFormat), Action::Open(Screen::AodDate)],
+    ));
     y = widgets::section(&mut c, t, f, general.bottom, "USB");
     let usb = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["文件传输", "檔案傳輸", "File transfer"])).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer))]);
     out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer)]));
@@ -443,6 +453,99 @@ pub fn screen_off(cx: &Ctx) -> Frame {
         widgets::footnote(&mut c, t, f, y, note);
     }
     Frame::new(t, c, hits(&times.rows, &picks), l.pick(SCREEN_TIMEOUT), top)
+}
+
+/// The clock told in twelve hours or twenty-four, for the status bar and
+/// the charging screen alike.
+pub fn time_format(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = page(cx);
+    let top = t.m.content_top;
+    let rows = [
+        Row::new(l.pick(HOURS_24)).trail(Trail::Check(!s.hour12)),
+        Row::new(l.pick(HOURS_12)).trail(Trail::Check(s.hour12)),
+    ];
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let note = l.pick([
+        "状态栏与息屏时的时钟都按此格式显示。",
+        "狀態列與息屏時的時鐘都按此格式顯示。",
+        "The status bar and the always-on clock both tell the time this way.",
+    ]);
+    let y = widgets::footnote(&mut c, t, f, list.bottom, note);
+    let picks = [Action::Hour12(false), Action::Hour12(true)];
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(TIME_FORMAT), top)
+}
+
+/// The date the charging screen shows, with the lunar date or without.
+pub fn aod_date_page(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = page(cx);
+    let top = t.m.content_top;
+    let rows: Vec<Row> = (0..AOD_DATES.len()).map(|k| Row::new(fmt::aod_date_name(l, k)).trail(Trail::Check(s.aod_date == k))).collect();
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let note = l.pick([
+        "只在插上充电线后的息屏画面上显示。",
+        "只在插上充電線後的息屏畫面上顯示。",
+        "Shown on the always-on screen that comes up with a cable.",
+    ]);
+    let y = widgets::footnote(&mut c, t, f, list.bottom, note);
+    let picks: Vec<Action> = (0..AOD_DATES.len()).map(Action::AodDate).collect();
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(AOD_DATE), top)
+}
+
+const HOURS_24: Text = ["24 小时制", "24 小時制", "24-hour"];
+const HOURS_12: Text = ["12 小时制", "12 小時制", "12-hour"];
+
+/// What flashing and decrypting have said, this phone's own details, and
+/// the output as a terminal shows it: plain lines on a dark card.
+pub fn output(cx: &Ctx) -> Frame {
+    let (t, f, i, s, l) = (cx.t, cx.f, cx.info, cx.state, cx.state.lang);
+    let m = &t.m;
+    let mut said = Vec::new();
+    let mut phone = format!("{} ({})", i.model, i.codename);
+    if let Some(v) = &i.os_version {
+        phone.push_str(&format!(" · {v}"));
+    }
+    if let Some(v) = &i.android {
+        phone.push_str(&format!(" · Android {v}"));
+    }
+    if let Some(slot) = i.slot {
+        phone.push_str(&format!(" · {}", slot.letter()));
+    }
+    said.push(format!("# {phone}"));
+    said.push(format!("# {}: {}", l.pick(["data 分区", "data 分割區", "data partition"]), fmt::data(l, &s.data)));
+    said.push("-".repeat(44));
+    if s.output.is_empty() {
+        said.push(l.pick(["暂无输出", "暫無輸出", "No output yet"]).to_string());
+    } else {
+        said.extend(s.output.iter().cloned());
+    }
+    let probe = Canvas::new(1, 1);
+    let text_w = m.w as f32 - m.margin * 2.0 - m.inner * 2.0;
+    let px = m.dp(11.5);
+    let mut lines: Vec<(bool, String)> = Vec::new();
+    for line in &said {
+        let mono = line.is_ascii();
+        let face = if mono { &f.mono } else { &f.body };
+        for part in widgets::wrap(&probe, face, line, px, text_w) {
+            lines.push((mono, part));
+        }
+    }
+    let pitch = m.dp(16.0);
+    let top = t.m.content_top;
+    let h = top + m.dp(12.0) + pitch * lines.len() as f32 + m.dp(12.0) + m.margin;
+    let mut c = Canvas::new(m.w, h.ceil() as u32);
+    c.fill_rect(0.0, 0.0, m.w as f32, h, t.pal.bg);
+    let card_h = h - top - m.margin;
+    let (x, w) = (m.margin, m.w as f32 - m.margin * 2.0);
+    c.fill_round_rect(x, top, w, card_h, m.card_radius, t.pal.card);
+    c.stroke_round_rect(x, top, w, card_h, m.card_radius, m.dp(0.8), t.pal.track);
+    for (k, (mono, line)) in lines.iter().enumerate() {
+        let face = if *mono { &f.mono } else { &f.body };
+        let ink = if line.starts_with('!') { t.pal.danger } else if line.starts_with('#') || line.starts_with('-') { t.pal.subtitle } else { t.pal.text };
+        c.text(face, line, x + m.inner, top + m.dp(12.0) + pitch * (k as f32 + 0.8), px, ink, Some(text_w));
+    }
+    Frame::new(t, c, Vec::new(), l.pick(["输出", "輸出", "Output"]), top)
 }
 
 /// Mount manager: the slot's partitions, each with a switch to mount it
@@ -547,6 +650,10 @@ const OS_VERSION: Text = ["OS 版本", "OS 版本", "OS version"];
 const ANDROID_VERSION: Text = ["Android 版本", "Android 版本", "Android version"];
 const CURRENT_SLOT: Text = ["当前槽位", "目前槽位", "Current slot"];
 const DATA_PART: Text = ["data 分区", "data 分割區", "data partition"];
+const BUILD_INFO: Text = ["编译信息", "編譯資訊", "Build"];
+const BUILT_FOR: Text = ["编译设备", "編譯裝置", "Built for"];
+const BUILT_AT: Text = ["编译时间", "編譯時間", "Built at"];
+const BUILT_BY: Text = ["编译者", "編譯者", "Built by"];
 
 /// The phone's processor by its marketing name in `l`, from the phone's
 /// settings, or else by its cores.
@@ -590,7 +697,13 @@ fn about_cards(cx: &Ctx, c: &mut Canvas) -> (Vec<Hit>, f32, f32) {
     let y = widgets::spec_card(c, t, f, summary.bottom + m.card_gap, &fmt::model_lines(&i.model), &specs, &tone);
     let links = widgets::list_toned(c, t, f, y + m.card_gap, &[Row::new(l.pick(SPECS)), Row::new(l.pick(LOGS))], &tone);
     out.extend(hits(&links.rows, &[Action::Open(Screen::Specs), Action::Open(Screen::Logs)]));
-    (out, summary.rows[0].y, links.bottom)
+    let build = widgets::section(c, t, f, links.bottom, l.pick(BUILD_INFO));
+    let build = widgets::info_card(c, t, f, build, &[
+        (l.pick(BUILT_FOR), i.model.clone()),
+        (l.pick(BUILT_AT), env!("SKYWARD_BUILD_TIME").to_string()),
+        (l.pick(BUILT_BY), env!("SKYWARD_BUILD_BY").to_string()),
+    ]);
+    (out, summary.rows[0].y, build)
 }
 
 /// Every reading the recovery has, modelled on the stock「全部参数与信息」.
@@ -743,10 +856,46 @@ fn data_status(cx: &Ctx, mut c: Canvas, icon: Icon, title: &str, note: Option<&s
 
 /// What leaves the decrypt page with the data partition left as it is.
 const NOT_NOW: Text = ["暂不解密", "暫不解密", "Not now"];
+const TYPE_CODE: Text = ["输入密码", "輸入密碼", "Enter the code"];
+const TAP_CODE: Text = ["点按输入密码", "點按輸入密碼", "Tap to type"];
 
 /// What a row whose work waits on the data partition says under it until
 /// that is decrypted.
 const DECRYPT_NEEDED: Text = ["需先完成「解密」", "需先完成「解密」", "Decrypt first"];
+
+/// The band at the screen's foot kept for the way off the page, how far
+/// above it the keypad stands, and where the card the code is typed into
+/// rests: the card keeps its place whether the keys show or not.
+const NOT_NOW_FOOT_DP: f32 = 48.0;
+const TYPING_FOOT_DP: f32 = 80.0;
+/// The card the code is typed into, how far its sides keep from the
+/// screen's edges, and the block from the title down to the card, which is
+/// centred in the room above the keys.
+const CODE_FIELD_DP: f32 = 52.0;
+const CODE_FIELD_SIDE_DP: f32 = 50.0;
+const CODE_BLOCK_DP: f32 = 164.0;
+const CODE_BLOCK_TOP_DP: f32 = 88.0;
+
+/// Where the keypad stands, `height` tall: its foot held above the
+/// screen's edge, never crowding the page's title.
+fn typing_top(t: &Theme, height: f32) -> f32 {
+    (t.m.h as f32 - t.m.dp(TYPING_FOOT_DP) - height).max(t.m.dp(190.0))
+}
+
+/// The card the code is typed into: its dots centred, or what to type
+/// while it holds none.
+fn code_field(c: &mut Canvas, t: &Theme, f: &Fonts, top: f32, typed: usize, placeholder: &str) -> Rect {
+    let m = &t.m;
+    let side = m.dp(CODE_FIELD_SIDE_DP);
+    let r = Rect::new(side, top, m.w as f32 - side * 2.0, m.dp(CODE_FIELD_DP));
+    c.fill_round_rect(r.x, r.y, r.w, r.h, m.dp(16.0), t.pal.card);
+    let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+    match typed {
+        0 => c.text_center(&f.body, placeholder, cx, cy, m.sub_px, t.pal.placeholder),
+        n => widgets::code_dots(c, t, cx, cy, n),
+    }
+    r
+}
 
 /// A user's own files wait on their screen lock: the control it is
 /// answered with, which takes nothing while what was entered is checked.
@@ -762,43 +911,76 @@ fn code(cx: &Ctx, mut c: Canvas, user: u32, keys: Keys, checking: bool) -> Frame
         (false, user) => tr!(l, "输入用户 {user} 的锁屏密码", "輸入使用者 {user} 的螢幕鎖定密碼", "Enter user {user}'s screen lock"),
     };
     let note = l.pick(if checking { ["正在验证", "正在驗證", "Checking"] } else { ["解密后可查看本机文件", "解密後可查看本機檔案", "Decrypt to see the phone's files"] });
-    c.text_center(&f.heading, &title, x, m.dp(130.0), m.dp(24.0), t.pal.text);
-    c.text_center(&f.body, note, x, m.dp(166.0), m.sub_px, t.pal.subtitle);
+    // The words and the card stand as one block, centred in the room the
+    // keys leave above them.
+    let keys_top = match keys {
+        Keys::Letters => m.h as f32 - widgets::keyboard_height(t),
+        Keys::Digits => typing_top(t, widgets::keypad_height(t)),
+        Keys::Pattern => m.h as f32,
+    };
+    let (title_cy, note_cy, field_top) = match keys {
+        Keys::Pattern => (m.dp(130.0), m.dp(166.0), m.h as f32 - m.dp(26.0)),
+        _ => {
+            let top = ((keys_top - m.dp(CODE_BLOCK_DP)) / 2.0).max(m.dp(CODE_BLOCK_TOP_DP));
+            (top + m.dp(12.0), top + m.dp(48.0), top + m.dp(112.0))
+        }
+    };
+    c.text_center(&f.heading, &title, x, title_cy, m.dp(24.0), t.pal.text);
+    c.text_center(&f.body, note, x, note_cy, m.sub_px, t.pal.subtitle);
     let mut pattern = None;
-    let bottom = match keys {
+    match keys {
         Keys::Letters => {
-            let top = m.h as f32 - widgets::keyboard_height(t);
-            let caps = widgets::keyboard(&mut c, t, f, l, top, s.layer, s.key_held(), l.pick(DECRYPT));
-            if !checking {
-                out.extend(caps.into_iter().map(|(rect, cap)| Hit { rect, action: Action::Type(cap) }));
+            // The keyboard is a panel of its own, sliding down out of the
+            // screen when folded away; the key that folds it is one of its
+            // own, in the strip above the keys.
+            let drop = s.keys_drop;
+            if drop < widgets::keyboard_hidden(t) - 0.5 {
+                let top = m.h as f32 - widgets::keyboard_height(t) + drop;
+                let caps = widgets::keyboard(&mut c, t, f, l, top, s.layer, s.key_held(), l.pick(DECRYPT), true);
+                if !checking && drop == 0.0 && !s.keys_hidden {
+                    out.extend(caps.into_iter().map(|(rect, cap)| Hit { rect, action: Action::Type(cap) }));
+                }
             }
-            top
         }
         Keys::Pattern => {
-            let span = m.dp(300.0);
+            // The grid keeps clear of the screen's sides, where a thumb
+            // reaching the outer dots would have nothing to spare.
+            let span = (m.w as f32 - m.dp(128.0)).max(m.dp(180.0)).min(m.dp(300.0));
             let cy = m.dp(300.0) + span / 2.0;
             widgets::pattern_lock(&mut c, t, x, cy, span, &s.pattern);
             if !checking {
                 out.push(Hit { rect: Rect::new(x - span, cy - span, span * 2.0, span * 2.0), action: Action::Pattern });
                 pattern = Some((x, cy, span));
             }
-            m.h as f32 - m.dp(26.0)
         }
         Keys::Digits => {
-            let top = m.h as f32 - widgets::keypad_height(t);
+            let top = typing_top(t, widgets::keypad_height(t));
             let caps = widgets::keypad(&mut c, t, f, l, top, s.key_held());
             if !checking {
                 out.extend(caps.into_iter().map(|(rect, cap)| Hit { rect, action: Action::Type(cap) }));
             }
-            top
+        }
+    }
+    // The code stands in a card of its own, in the same place whether the
+    // keys are up or folded away; touching it brings them back.
+    let field = match keys {
+        Keys::Pattern => None,
+        _ => {
+            let placeholder = if s.keys_hidden { l.pick(TAP_CODE) } else { l.pick(TYPE_CODE) };
+            let r = code_field(&mut c, t, f, field_top, s.code.chars().count(), placeholder);
+            if keys == Keys::Letters && s.keys_hidden && !checking {
+                out.push(Hit { rect: r, action: Action::Keyboard(true) });
+            }
+            Some(r)
         }
     };
-    // The dots sit just above whatever types into them; a pattern is its
-    // own showing of what has been drawn.
-    if keys != Keys::Pattern {
-        widgets::code_dots(&mut c, t, x, bottom - m.dp(92.0), s.code.chars().count());
-    }
-    let skip_cy = bottom - m.dp(34.0);
+    // The way off the page keeps to the screen's foot, but for the
+    // keyboard shown, which leaves no room below and whose field the words
+    // then stand under.
+    let skip_cy = match field {
+        Some(r) if keys == Keys::Letters => r.y + r.h + m.dp(40.0),
+        _ => m.h as f32 - m.dp(NOT_NOW_FOOT_DP),
+    };
     c.text_center(&f.heading, l.pick(NOT_NOW), x, skip_cy, m.row_title_px, t.pal.accent);
     out.push(Hit { rect: Rect::new(x - m.dp(80.0), skip_cy - m.dp(24.0), m.dp(160.0), m.dp(48.0)), action: Action::Skip });
     Frame { header: false, pattern, ..Frame::new(t, c, out, l.pick(DECRYPT), 0.0) }
@@ -1247,7 +1429,13 @@ pub fn installing(cx: &Ctx) -> Frame {
                     "Flashing writes over what the partition holds. Going back cancels it.",
                 ],
             });
-            widgets::footnote(&mut c, t, f, track.y + track.h, note)
+            let y = widgets::footnote(&mut c, t, f, track.y + track.h, note);
+            let warn = l.pick([
+                "除推荐分区外，其他分区可能不适合该镜像，写入前请确认。",
+                "除推薦分割區外，其他分割區可能不適合該映像檔，寫入前請確認。",
+                "Partitions past the likeliest may not suit the image; make sure before writing.",
+            ]);
+            widgets::footnote(&mut c, t, f, y, warn)
         }
         Install::Confirming { version, wipe } => {
             let (title, color, icon, detail, which) = if *wipe {
@@ -1413,7 +1601,9 @@ pub fn installing(cx: &Ctx) -> Frame {
         (Source::Asked { .. }, Some(reason)) => widgets::info_card(&mut c, t, f, bottom + t.m.dp(12.0), &[(l.pick(REASON), reason.clone())]),
         _ => bottom,
     };
-    Frame { rows, ..Frame::new(t, fit(c, t, bottom), out, install_title(l, s.source), top) }
+    // What flashing says is a page of its own, from the button in the bar.
+    let button = Some((widgets::Glyph::Terminal, Action::Open(Screen::Output)));
+    Frame { rows, button, ..Frame::new(t, fit(c, t, bottom), out, install_title(l, s.source), top) }
 }
 
 /// What a request the system made gives as why.
@@ -1755,7 +1945,7 @@ pub fn wipe(cx: &Ctx) -> Frame {
 /// is, and its keys as touch targets.
 fn keyboard_hits(c: &mut Canvas, t: &Theme, f: &Fonts, s: &State, enter: &str, out: &mut Vec<Hit>) -> f32 {
     let top = t.m.h as f32 - widgets::keyboard_height(t);
-    let keys = widgets::keyboard(c, t, f, s.lang, top, s.layer, s.key_held(), enter);
+    let keys = widgets::keyboard(c, t, f, s.lang, top, s.layer, s.key_held(), enter, false);
     out.extend(keys.into_iter().map(|(rect, cap)| Hit { rect, action: Action::Type(cap) }));
     top
 }

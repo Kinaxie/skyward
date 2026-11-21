@@ -820,7 +820,7 @@ fn recovery() -> Result<()> {
                 programs.extend(prepare(&cfg, booted_slot()?)?);
             }
             let root = Path::new("/");
-            ui::run(&cfg, &programs, &root.join(ramdisk::FONT), &root.join(ramdisk::MONO), request, Screen::Home, None)
+            ui::run(&cfg, &programs, &root.join(ramdisk::FONT), &root.join(ramdisk::MONO), request, Screen::Decrypt, None)
         }
         #[cfg(not(target_os = "android"))]
         {

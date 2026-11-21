@@ -166,32 +166,49 @@ impl App {
     /// as the panel goes off or comes up.
     pub fn compose(&mut self, out: &mut Canvas, f: &Fonts, info: &DeviceInfo, clock: &str, now: u64) {
         let charge = self.charging.as_ref().map_or(0.0, |c| c.shown.level(now));
-        if charge < 1.0 {
-            self.compose_page(out, f, info, clock, now);
-        }
-        if charge > 0.0 {
-            self.compose_charging(out, f, info, charge, now);
+        let aod = self.aod.filter(|since| now.saturating_sub(*since) < AOD_MS);
+        let shown = fmt::clock_shown(clock, self.state.hour12);
+        if charge < 1.0 && aod.is_none() {
+            self.compose_page(out, f, info, &shown, now);
         }
         out.dim(self.curtain.level(now));
+        if charge > 0.0 {
+            self.compose_charging(out, f, info, clock, charge);
+        } else if aod.is_some() {
+            self.compose_aod(out, f, info, clock);
+        }
     }
 
     /// The charging screen, `level` of the way over the page drawn on `out`.
-    fn compose_charging(&mut self, out: &mut Canvas, f: &Fonts, info: &DeviceInfo, level: f32, now: u64) {
+    fn compose_charging(&mut self, out: &mut Canvas, f: &Fonts, info: &DeviceInfo, clock: &str, level: f32) {
         let battery = info.battery.as_ref().expect("a cable went in on a phone whose battery is read");
         let (t, lang) = (self.theme(), self.state.lang);
-        if !self.charge_art.as_ref().is_some_and(|a| a.shows(lang, battery)) {
-            self.charge_art = Some(charge::Art::new(f, &t.m, lang, battery).expect("the screens' face takes the charging screen's weight"));
+        let shown = fmt::clock_shown(clock, self.state.hour12);
+        let date = fmt::aod_date(lang, jiff::Timestamp::now().as_second(), self.state.time_zone, self.state.aod_date);
+        if !self.charge_art.as_ref().is_some_and(|a| a.shows(battery, &shown, &date)) {
+            self.charge_art = Some(charge::Art::new(f, &t.m, battery, &shown, &date).expect("the screens' face takes the charging screen's weight"));
         }
-        let since = self.charging.as_ref().map_or(now, |c| c.since);
-        let dither = self.dither.get_or_insert_with(|| glow::Dither::new(out.w as usize, out.h as usize));
         let art = self.charge_art.as_ref().expect("drawn above");
         if level >= 1.0 {
-            charge::draw(out, art, &t.m, battery.level, now.saturating_sub(since), dither);
+            charge::draw(out, art);
         } else {
             let screen = self.charge_canvas.get_or_insert_with(|| Canvas::new(out.w, out.h));
-            charge::draw(screen, art, &t.m, battery.level, now.saturating_sub(since), dither);
+            charge::draw(screen, art);
             out.lay(screen, 0, 0, level);
         }
+    }
+
+    /// The always-on screen a touch on the dark panel brings up: the same
+    /// art as the charging screen, on black.
+    fn compose_aod(&mut self, out: &mut Canvas, f: &Fonts, info: &DeviceInfo, clock: &str) {
+        let battery = info.battery.as_ref().expect("the always-on screen shows a phone whose battery is read");
+        let (t, lang) = (self.theme(), self.state.lang);
+        let shown = fmt::clock_shown(clock, self.state.hour12);
+        let date = fmt::aod_date(lang, jiff::Timestamp::now().as_second(), self.state.time_zone, self.state.aod_date);
+        if !self.charge_art.as_ref().is_some_and(|a| a.shows(battery, &shown, &date)) {
+            self.charge_art = Some(charge::Art::new(f, &t.m, battery, &shown, &date).expect("the screens' face takes the always-on clock's weight"));
+        }
+        charge::draw(out, self.charge_art.as_ref().expect("drawn above"));
     }
 
     /// The visible part of the page, pulled past an end if it is, its large
@@ -224,7 +241,7 @@ impl App {
         if let Some((which, track)) = self.knob.take() {
             self.paint_knob(&t, f, which, track);
         }
-        if self.toast.as_ref().is_some_and(|m| now >= m.1) {
+        if self.toast.as_ref().is_some_and(|m| now >= m.2) {
             self.toast = None;
         }
         let title = self.frame.as_ref().expect("rendered above").title;
@@ -320,8 +337,9 @@ impl App {
         self.shown = Some(view);
 
         widgets::status_bar(out, &t, f, &self.bar(clock, info), t.pal.status);
-        if let Some((text, _)) = &self.toast {
-            widgets::toast(out, &t, f, text);
+        if let Some((text, at, until)) = &self.toast {
+            let (level, rise) = toast_motion(*at, *until, now);
+            widgets::toast(out, &t, f, text, level, rise);
         }
         match self.drag {
             Drag::Edge { start, from_left, armed, x, cy } => {
@@ -590,8 +608,9 @@ impl App {
         draw_faded(out, cross, 0.0, 0.0, t.pal.text, shown, blur);
         self.morph = Some(morph);
         widgets::status_bar(out, &t, f, &self.bar(clock, info), t.pal.status);
-        if let Some((text, _)) = &self.toast {
-            widgets::toast(out, &t, f, text);
+        if let Some((text, at, until)) = &self.toast {
+            let (level, rise) = toast_motion(*at, *until, now);
+            widgets::toast(out, &t, f, text, level, rise);
         }
     }
 
@@ -648,9 +667,18 @@ impl App {
     }
 
     pub(super) fn say(&mut self, text: &str, now: u64) {
-        self.toast = Some((text.to_string(), now + TOAST_MS));
+        self.toast = Some((text.to_string(), now, now + TOAST_MS));
         self.dirty = true;
     }
+}
+
+/// How a message stands at `now`: how far in it is, and how far from its
+/// rest it shows, easing in as it appears and away as it goes.
+fn toast_motion(from: u64, until: u64, now: u64) -> (f32, f32) {
+    let enter = (now.saturating_sub(from) as f32 / TOAST_IN_MS as f32).min(1.0);
+    let leave = (until.saturating_sub(now) as f32 / TOAST_OUT_MS as f32).min(1.0);
+    let level = enter.min(leave);
+    (level, (1.0 - level) * 8.0)
 }
 
 #[cfg(test)]

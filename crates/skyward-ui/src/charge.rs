@@ -1,157 +1,93 @@
-//! The charging screen, shown as a cable goes in: the battery's level
-//! large on black, what the charger does under it, and a tide of light at
-//! the foot of the screen that rises as high as the battery is full and
-//! breathes.
+//! The charging screen, shown as a cable goes in: the time large in the
+//! middle of the black screen, the date above it and the battery under it,
+//! as an always-on display shows them.
 
 use crate::canvas::Canvas;
 use crate::color::Rgba;
-use crate::fmt;
 use crate::font::Fonts;
-use crate::glow::{self, Dither, Field};
-use crate::lang::Lang;
-use crate::motion;
-use crate::sprite::Sprite;
 use crate::theme::Metrics;
-use skyward_info::{Battery, Charge};
+use skyward_info::Battery;
 
-/// The tide's colours: a deep navy where its light is faint, an electric
-/// blue where it glows.
-const NAVY: [f32; 3] = [0.03, 0.07, 0.32];
-const ELECTRIC: [f32; 3] = [0.14, 0.30, 0.94];
+/// The clock's weight and size in dp, the date's and the battery's, and the
+/// room between them.
+const CLOCK_WEIGHT: f32 = 400.0;
+const CLOCK_DP: f32 = 112.0;
+const DATE_WEIGHT: f32 = 500.0;
+const DATE_DP: f32 = 19.0;
+const LEVEL_WEIGHT: f32 = 400.0;
+const LEVEL_DP: f32 = 14.0;
+const DATE_GAP_DP: f32 = 14.0;
+const LEVEL_GAP_DP: f32 = 30.0;
 
-/// How long, in seconds, the tide takes to rise into place, and to
-/// breathe once.
-const RISE: f32 = 0.9;
-const BREATH: f32 = 2.6;
-
-/// The tide's crest, as a share of the screen's height above its foot: how
-/// high it stands on an empty battery, how much higher on a full one, and
-/// how far it swells as it breathes. The crest is soft over this share.
-const CREST_EMPTY: f32 = 0.14;
-const CREST_FULL: f32 = 0.20;
-const SWELL: f32 = 0.012;
-const SOFT: f32 = 0.11;
-
-/// The tide is worked out every this many pixels and filled in between.
-const CELL: usize = 16;
-
-/// The level: the weight of the screens' face its digits are set in, their
-/// size and the percent sign's in dp, and where their middle sits, as a
-/// share of the screen's height from its top. Under them, what the charger
-/// does, at this size, this far below the digits.
-const DIGITS_WEIGHT: f32 = 300.0;
-const DIGITS_DP: f32 = 88.0;
-const PERCENT_DP: f32 = 30.0;
-const PERCENT_GAP_DP: f32 = 4.0;
-const DIGITS_AT: f32 = 0.36;
-const LINE_DP: f32 = 15.0;
-const LINE_GAP_DP: f32 = 30.0;
+/// The battery's outline: its width and height, what its fill keeps clear
+/// of the outline, its nub, and the room before what it holds.
+const PILL_W_DP: f32 = 26.0;
+const PILL_H_DP: f32 = 13.0;
+const PILL_INSET_DP: f32 = 2.0;
+const NUB_W_DP: f32 = 2.0;
+const PILL_GAP_DP: f32 = 6.0;
 
 const BLACK: Rgba = Rgba::rgb(0, 0, 0);
-const INK: Rgba = Rgba::rgb(255, 255, 255);
-const LINE_INK: Rgba = Rgba { r: 255, g: 255, b: 255, a: 160 };
+/// The clock's ink, as gray as an always-on display keeps it; the date and
+/// the battery a step dimmer.
+const CLOCK_INK: Rgba = Rgba::rgb(206, 206, 206);
+const INK: Rgba = Rgba::rgb(196, 196, 196);
 
-/// What the charger does to the battery, in the language.
-fn doing(l: Lang, b: &Battery) -> &'static str {
-    match b.charge {
-        Charge::Charging if b.quick => l.pick(["快速充电中", "快速充電中", "Charging quickly"]),
-        other => fmt::charge(l, other),
-    }
-}
-
-/// The level and what the charger does, drawn once for as long as they
-/// hold.
+/// What the screen shows, drawn once for as long as it holds.
 pub struct Art {
-    shows: (u8, &'static str),
-    digits: Sprite,
-    percent: Sprite,
-    line: Sprite,
+    shows: (u8, String, String),
+    block: Canvas,
+    top: f32,
 }
 
 impl Art {
-    pub fn new(f: &Fonts, m: &Metrics, l: Lang, b: &Battery) -> anyhow::Result<Art> {
-        let face = f.face(DIGITS_WEIGHT)?;
-        let (w, h) = (m.w as f32, m.h as f32);
-        let (dpx, ppx, lpx) = (m.dp(DIGITS_DP), m.dp(PERCENT_DP), m.dp(LINE_DP));
-        let (digits, line) = (b.level.to_string(), doing(l, b));
+    /// The screen's middle, `clock` and `date` as the phone's own zone has
+    /// them, the battery at `b`'s level.
+    pub fn new(f: &Fonts, m: &Metrics, b: &Battery, clock: &str, date: &str) -> anyhow::Result<Art> {
+        let (face, date_face, level_face) = (f.face(CLOCK_WEIGHT)?, f.face(DATE_WEIGHT)?, f.face(LEVEL_WEIGHT)?);
+        let (clock_px, date_px, level_px) = (m.dp(CLOCK_DP), m.dp(DATE_DP), m.dp(LEVEL_DP));
         let probe = Canvas::new(1, 1);
-        let (dw, pw, gap) = (probe.text_width(&face, &digits, dpx), probe.text_width(&face, "%", ppx), m.dp(PERCENT_GAP_DP));
-        let x = (w - dw - gap - pw) / 2.0;
-        // The digits and the percent sign share a baseline, the digits'
-        // middle on the line the screen puts them.
-        let baseline = h * DIGITS_AT + face.cap(dpx) / 2.0;
-        let pad = m.dp(8.0);
-        let box_h = (dpx * 1.6) as u32;
-        let top = baseline - dpx * 1.2;
-        let digits_art = Sprite::capture(x - pad, top, (dw + 2.0 * pad) as u32, box_h, |c, ox, oy| {
-            c.text(&face, &digits, x + ox, baseline + oy, dpx, INK, None);
-        });
-        let px = x + dw + gap;
-        let percent = Sprite::capture(px - pad, top, (pw + 2.0 * pad) as u32, box_h, |c, ox, oy| {
-            c.text(&face, "%", px + ox, baseline + oy, ppx, INK, None);
-        });
-        let lw = probe.text_width(&f.body, line, lpx);
-        let (lx, cy) = ((w - lw) / 2.0, baseline + m.dp(LINE_GAP_DP) + lpx / 2.0);
-        let line_art = Sprite::capture(lx - pad, cy - lpx, (lw + 2.0 * pad) as u32, (lpx * 2.0) as u32, |c, ox, oy| {
-            c.text_vc(&f.body, line, lx + ox, cy + oy, lpx, INK, None);
-        });
-        Ok(Art { shows: (b.level, line), digits: digits_art, percent, line: line_art })
-    }
-
-    /// Whether the art shows `b` as it stands, in `l`.
-    pub fn shows(&self, l: Lang, b: &Battery) -> bool {
-        self.shows == (b.level, doing(l, b))
-    }
-}
-
-/// Draw the charging screen over the whole of `out`, `ms` after the cable
-/// went in, the battery `level` full.
-pub fn draw(out: &mut Canvas, art: &Art, m: &Metrics, level: u8, ms: u64, dither: &Dither) {
-    let (top, field) = tide(m, level, ms);
-    out.fill_rect(0.0, 0.0, out.w as f32, top as f32, BLACK);
-    glow::paint_band(out, &field, top, dither);
-    art.digits.draw(out, 0.0, 0.0, INK, 1.0);
-    art.percent.draw(out, 0.0, 0.0, INK, 1.0);
-    art.line.draw(out, 0.0, 0.0, LINE_INK, 1.0);
-}
-
-fn smooth(x: f32) -> f32 {
-    let x = x.clamp(0.0, 1.0);
-    x * x * (3.0 - 2.0 * x)
-}
-
-/// The tide `ms` after the cable went in, the battery `level` full: the
-/// row its band starts on, and the band, sampled from there to the foot of
-/// the screen.
-fn tide(m: &Metrics, level: u8, ms: u64) -> (usize, Field) {
-    let (w, h) = (m.w as usize, m.h as usize);
-    let t = ms as f32 / 1000.0;
-    let rise = motion::settle(ms, RISE);
-    let breath = (std::f32::consts::TAU * t / BREATH).sin();
-    let crest = rise * (CREST_EMPTY + CREST_FULL * level.min(100) as f32 / 100.0) + SWELL * breath * rise;
-    let reach = CREST_EMPTY + CREST_FULL + SWELL + SOFT;
-    let top = (h as f32 * (1.0 - reach)) as usize / CELL * CELL;
-    let (cols, rows) = (w / CELL + 2, (h - top) / CELL + 2);
-    let mut rgb = vec![[0.0f32; 3]; cols * rows];
-    for (j, line) in rgb.chunks_exact_mut(cols).enumerate() {
-        // Height above the foot of the screen, as a share of its height.
-        let v = 1.0 - (top + j * CELL) as f32 / h as f32;
-        for (i, px) in line.iter_mut().enumerate() {
-            let u = (i * CELL) as f32 / w as f32;
-            // Two swells roll along the crest, each its own way.
-            let roll = 0.016 * ((u * 5.0 + t * 0.9).sin() + 0.6 * (u * 9.0 - t * 1.3).sin()) * rise;
-            let edge = crest + roll;
-            let fill = smooth((edge + SOFT / 2.0 - v) / SOFT);
-            if fill <= 0.0 {
-                continue;
-            }
-            // A broad glow just under the crest, electric blue, going to
-            // navy toward the foot.
-            let glow = (-((edge - 0.06 - v) / 0.16).powi(2)).exp();
-            let noise = glow::perlin(u * 2.5 + t * 0.15, v * 4.0 - t * 0.1);
-            let light = fill * (0.30 + 0.70 * glow) * (0.86 + 0.14 * breath) * (0.85 + 0.15 * noise);
-            *px = std::array::from_fn(|c| (NAVY[c] + (ELECTRIC[c] - NAVY[c]) * glow) * light * 255.0);
+        let clock_w = probe.text_width(&face, clock, clock_px);
+        let date_w = probe.text_width(&date_face, date, date_px);
+        let level = format!("{}%", b.level);
+        let level_w = probe.text_width(&level_face, &level, level_px);
+        let (pill_w, pill_h, pill_gap) = (m.dp(PILL_W_DP), m.dp(PILL_H_DP), m.dp(PILL_GAP_DP));
+        let (date_h, clock_h, row_h) = (if date.is_empty() { 0.0 } else { date_face.cap(date_px) }, face.cap(clock_px), pill_h.max(level_px));
+        let date_gap = if date.is_empty() { 0.0 } else { m.dp(DATE_GAP_DP) };
+        let block_h = date_h + date_gap + clock_h + m.dp(LEVEL_GAP_DP) + row_h;
+        let mut block = Canvas::new(m.w, block_h.ceil() as u32);
+        let cx = m.w as f32 / 2.0;
+        if !date.is_empty() {
+            block.text_vc(&date_face, date, cx - date_w / 2.0, date_h / 2.0, date_px, INK, None);
         }
+        let clock_top = date_h + date_gap;
+        block.text(&face, clock, cx - clock_w / 2.0, clock_top + clock_h, clock_px, CLOCK_INK, None);
+        // The battery under the clock: its outline, what it holds, its nub,
+        // and the level beside it.
+        let row_top = clock_top + clock_h + m.dp(LEVEL_GAP_DP);
+        let row_w = pill_w + pill_gap + level_w;
+        let (x, cy) = (cx - row_w / 2.0, row_top + row_h / 2.0);
+        let (px, py) = (x, cy - pill_h / 2.0);
+        block.stroke_round_rect(px, py, pill_w, pill_h, pill_h / 2.0, m.dp(1.4), INK);
+        let inset = m.dp(PILL_INSET_DP);
+        let fill_w = ((pill_w - inset * 2.0) * b.level.min(100) as f32 / 100.0).max(0.0);
+        if fill_w > 0.0 {
+            block.fill_round_rect(px + inset, py + inset, fill_w, pill_h - inset * 2.0, (pill_h - inset * 2.0) / 2.0, INK);
+        }
+        block.fill_round_rect(px + pill_w + m.dp(1.5), cy - pill_h * 0.22, m.dp(NUB_W_DP), pill_h * 0.44, m.dp(1.2), INK);
+        block.text_vc(&level_face, &level, px + pill_w + pill_gap, cy, level_px, INK, None);
+        let top = (m.h as f32 - block_h) / 2.0;
+        Ok(Art { shows: (b.level, clock.to_string(), date.to_string()), block, top })
     }
-    (top, Field { cell: CELL, cols, rows, rgb })
+
+    /// Whether the art shows `b` with the clock and date as they stand.
+    pub fn shows(&self, b: &Battery, clock: &str, date: &str) -> bool {
+        self.shows == (b.level, clock.to_string(), date.to_string())
+    }
+}
+
+/// Draw the charging screen over the whole of `out`.
+pub fn draw(out: &mut Canvas, art: &Art) {
+    out.fill_rect(0.0, 0.0, out.w as f32, out.h as f32, BLACK);
+    out.lay(&art.block, 0, art.top as i32, 1.0);
 }

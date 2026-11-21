@@ -5,7 +5,7 @@
 //! a time zone, a part or a place by its name, so a later version that lists
 //! them otherwise reads them the same.
 
-use crate::app::{Place, State, SCREEN_OFF, TIME_ZONES};
+use crate::app::{Place, State, AOD_DATES, SCREEN_OFF, TIME_ZONES};
 use crate::Lang;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,10 @@ pub struct Settings {
     pub screen_off: u64,
     /// The time zone, by its name in the tz database.
     pub time_zone: String,
+    /// The clock is told in twelve hours rather than twenty-four.
+    pub hour12: bool,
+    /// The date the charging screen shows, by its name in [`AOD_DATES`].
+    pub aod_date: String,
     pub vibrate: bool,
     /// The vibration slider's place, from 0 at its left end to 1.
     pub vibration: f32,
@@ -123,6 +127,8 @@ impl Settings {
             brightness: state.brightness,
             screen_off: SCREEN_OFF[state.screen_off].map_or(0, |ms| ms / 1000),
             time_zone: TIME_ZONES[state.time_zone].2.to_string(),
+            hour12: state.hour12,
+            aod_date: AOD_DATES[state.aod_date].to_string(),
             vibrate: state.vibrate,
             vibration: state.vibration,
             file_transfer: state.file_transfer,
@@ -173,6 +179,10 @@ impl Settings {
         if (0.0..=1.0).contains(&self.brightness) {
             state.brightness = self.brightness;
         }
+        state.hour12 = self.hour12;
+        if let Some(k) = AOD_DATES.iter().position(|n| *n == self.aod_date) {
+            state.aod_date = k;
+        }
         if let Some(at) = SCREEN_OFF.iter().position(|off| off.map_or(0, |ms| ms / 1000) == self.screen_off) {
             state.screen_off = at;
         }
@@ -214,7 +224,7 @@ fn picked<const N: usize>(kept: &[String], all: &[&str; N]) -> [bool; N] {
 /// What the settings file held as the recovery started.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kept {
-    Settings(Settings),
+    Settings(Box<Settings>),
     /// No settings: no file, or one that does not read as settings.
     Nothing,
     /// Where the file is could not be read; it is left alone this time.
@@ -225,7 +235,7 @@ impl Kept {
     /// The settings the file held, if it held any.
     pub fn settings(&self) -> Option<&Settings> {
         match self {
-            Kept::Settings(settings) => Some(settings),
+            Kept::Settings(settings) => Some(settings.as_ref()),
             Kept::Nothing | Kept::Unreadable => None,
         }
     }
@@ -246,7 +256,7 @@ pub struct Keeper {
 impl Keeper {
     pub fn new(kept: &Kept) -> Keeper {
         let holds = match kept {
-            Kept::Settings(settings) => Some(Some(settings.clone())),
+            Kept::Settings(settings) => Some(Some(settings.as_ref().clone())),
             Kept::Nothing => Some(None),
             Kept::Unreadable => None,
         };
@@ -375,7 +385,7 @@ mod tests {
 
     #[test]
     fn changed_settings_are_written_once_they_have_stood_for_a_moment() {
-        let mut keeper = Keeper::new(&Kept::Settings(Settings::default()));
+        let mut keeper = Keeper::new(&Kept::Settings(Box::default()));
         assert_eq!(keeper.due(Settings::default(), 0), None, "what the file holds is not written again");
         let dark = Settings { dark: true, ..Settings::default() };
         assert_eq!(keeper.due(dark.clone(), 1_000), None);

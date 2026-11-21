@@ -481,7 +481,7 @@ mod tests {
         app.state.install = Install::Ending;
         assert!(tap(&mut app, &f, &i, Action::ChooseEntry(0)).is_empty());
         assert_eq!(app.screen(), Screen::Choose(Place::Storage));
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "it says to wait");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "it says to wait");
     }
 
     #[test]

@@ -915,15 +915,155 @@ fn chip(t: &Theme, (cx, cy, r): (f32, f32, f32)) -> (Canvas, i32, i32) {
     (c, x0, y0)
 }
 
-/// A short message in a dark capsule above the bottom edge.
-pub fn toast(c: &mut Canvas, t: &Theme, f: &Fonts, text: &str) {
+/// A short message in a card above the bottom edge, as the system shows
+/// one: the settings' gear in an app's tile at the left, and the words
+/// centred beside it, wrapped when they take more than a line. The card
+/// is acrylic: the page behind it blurred and tinted, with a lit rim.
+/// `level` fades it in and away, and `rise` lifts it the last dp into place.
+pub fn toast(c: &mut Canvas, t: &Theme, f: &Fonts, text: &str, level: f32, rise: f32) {
+    if level <= 0.0 {
+        return;
+    }
     let m = &t.m;
+    let pad = m.dp(16.0);
+    let tile = m.dp(26.0);
+    let gap = m.dp(12.0);
     let px = m.sub_px;
-    let w = c.text_width(&f.heading, text, px) + m.dp(40.0);
-    let h = m.dp(44.0);
-    let (x, y) = ((m.w as f32 - w) / 2.0, m.h as f32 - m.dp(120.0));
-    c.fill_round_rect(x, y, w, h, h / 2.0, Rgba::rgb(30, 30, 30).with_alpha(235));
-    c.text_center(&f.heading, text, m.w as f32 / 2.0, y + h / 2.0, px, Rgba::rgb(255, 255, 255));
+    // Wide enough for sixteen characters of the words, as the system's own
+    // notices are, and never closer to the screen's sides than 12dp.
+    let most = m.dp(302.0).min(m.w as f32 - m.dp(24.0));
+    let lines = wrap(c, &f.heading, text, px, most - pad * 2.0 - tile - gap);
+    let widest = lines.iter().map(|l| c.text_width(&f.heading, l, px)).fold(0.0, f32::max);
+    let card_w = (widest + pad * 2.0 + tile + gap).clamp(m.dp(176.0), most);
+    let line_h = m.dp(21.0);
+    let h = (line_h * lines.len() as f32 + pad * 2.0).max(tile + pad * 1.5);
+    let (x, y) = ((m.w as f32 - card_w) / 2.0, m.h as f32 - m.dp(112.0) - h + m.dp(rise));
+    let alpha = |a: u8| (a as f32 * level).round() as u8;
+    let radius = m.card_radius;
+    c.shadow_round_rect(x, y, card_w, h, radius, m.dp(12.0), Rgba::rgb(0, 0, 0).with_alpha(alpha(40)));
+    // The backdrop, blurred and let through the card's rounded shape.
+    if c.whole() {
+        let (bx, by) = (x.floor().max(0.0) as u32, y.floor().max(0.0) as u32);
+        let bw = (card_w.ceil() as u32 + 1).min(c.w - bx);
+        let bh = (h.ceil() as u32 + 1).min(c.h - by);
+        let mut back = c.crop(bx, by, bw, bh);
+        blur_rgb(&mut back, (m.dp(13.0) as usize).max(1));
+        for py in 0..bh {
+            for qx in 0..bw {
+                let cov = round_cover(qx as f32 + 0.5, py as f32 + 0.5, bw as f32, bh as f32, radius) * level;
+                if cov > 0.0 {
+                    let i = ((py * bw + qx) * 4) as usize;
+                    let p = Rgba { r: back.data[i], g: back.data[i + 1], b: back.data[i + 2], a: 255 };
+                    c.blend((bx + qx) as i32, (by + py) as i32, p, cov);
+                }
+            }
+        }
+    }
+    // The tint the frosted glass takes, and the rim that catches the light.
+    let (tint, tint_a, rim_a) = if t.dark {
+        (Rgba::rgb(40, 40, 45), 170, 46)
+    } else {
+        (Rgba::rgb(255, 255, 255), 168, 96)
+    };
+    c.fill_round_rect(x, y, card_w, h, radius, tint.with_alpha(alpha(tint_a)));
+    c.stroke_round_rect(x, y, card_w, h, radius, m.dp(0.8), Rgba::rgb(255, 255, 255).with_alpha(alpha(rim_a)));
+    // The settings' gear, white on MIUI's blue tile.
+    let (tx, ty) = (x + pad, y + (h - tile) / 2.0);
+    c.fill_round_rect(tx, ty, tile, tile, m.dp(8.0), t.pal.accent.with_alpha(alpha(t.pal.accent.a)));
+    icons::glyph(c, Icon::Gear, tx + tile / 2.0, ty + tile / 2.0, tile * 0.68, Rgba::rgb(255, 255, 255).with_alpha(alpha(255)));
+    let text_cx = x + pad + tile + gap + (card_w - pad * 2.0 - tile - gap) / 2.0;
+    let first = y + (h - line_h * lines.len() as f32) / 2.0 + line_h / 2.0;
+    for (k, line) in lines.iter().enumerate() {
+        c.text_center(&f.heading, line, text_cx, first + line_h * k as f32, px, t.pal.text.with_alpha(alpha(t.pal.text.a)));
+    }
+}
+
+/// How much of a pixel at (`x`, `y`) lies inside a `w`×`h` rounded rect of
+/// radius `r`, from 0 to 1, eased over the last pixel at its corners.
+fn round_cover(x: f32, y: f32, w: f32, h: f32, r: f32) -> f32 {
+    let (cx, cy) = (x.clamp(r, w - r), y.clamp(r, h - r));
+    let d = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+    (r - d + 0.5).clamp(0.0, 1.0)
+}
+
+/// Blur the colours of `c` by about `radius` pixels each way: two box
+/// passes over rows and columns, close to a Gaussian half as wide.
+fn blur_rgb(c: &mut Canvas, radius: usize) {
+    let (w, h) = (c.w as usize, c.h as usize);
+    if radius == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let mut a = c.data.clone();
+    let mut b = vec![0u8; a.len()];
+    for _ in 0..2 {
+        for y in 0..h {
+            let mut sum = [0u32; 3];
+            let mut n = 0u32;
+            for x in 0..=radius.min(w - 1) {
+                let i = (y * w + x) * 4;
+                for k in 0..3 {
+                    sum[k] += a[i + k] as u32;
+                }
+                n += 1;
+            }
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                for k in 0..3 {
+                    b[i + k] = (sum[k] / n) as u8;
+                }
+                b[i + 3] = 255;
+                if let Some(drop) = x.checked_sub(radius) {
+                    let j = (y * w + drop) * 4;
+                    for k in 0..3 {
+                        sum[k] -= a[j + k] as u32;
+                    }
+                    n -= 1;
+                }
+                let add = x + radius + 1;
+                if add < w {
+                    let j = (y * w + add) * 4;
+                    for k in 0..3 {
+                        sum[k] += a[j + k] as u32;
+                    }
+                    n += 1;
+                }
+            }
+        }
+        for x in 0..w {
+            let mut sum = [0u32; 3];
+            let mut n = 0u32;
+            for y in 0..=radius.min(h - 1) {
+                let i = (y * w + x) * 4;
+                for k in 0..3 {
+                    sum[k] += b[i + k] as u32;
+                }
+                n += 1;
+            }
+            for y in 0..h {
+                let i = (y * w + x) * 4;
+                for k in 0..3 {
+                    a[i + k] = (sum[k] / n) as u8;
+                }
+                a[i + 3] = 255;
+                if let Some(drop) = y.checked_sub(radius) {
+                    let j = (drop * w + x) * 4;
+                    for k in 0..3 {
+                        sum[k] -= b[j + k] as u32;
+                    }
+                    n -= 1;
+                }
+                let add = y + radius + 1;
+                if add < h {
+                    let j = (add * w + x) * 4;
+                    for k in 0..3 {
+                        sum[k] += b[j + k] as u32;
+                    }
+                    n += 1;
+                }
+            }
+        }
+    }
+    c.data = a;
 }
 
 /// The home page's search bar in `r`, at `level` of its strength, without
@@ -1864,8 +2004,8 @@ pub fn pattern_lock(c: &mut Canvas, t: &Theme, cx: f32, cy: f32, span: f32, path
 }
 
 /// The round keys a screen lock's code is typed on.
-const PAD_KEY_DP: f32 = 76.0;
-const PAD_GAP_X_DP: f32 = 30.0;
+const PAD_KEY_DP: f32 = 72.0;
+const PAD_GAP_X_DP: f32 = 26.0;
 const PAD_GAP_Y_DP: f32 = 18.0;
 const PAD_TOP_DP: f32 = 10.0;
 /// Room under the last row for the gesture area of the screen's edge.
@@ -1915,8 +2055,8 @@ pub fn keypad(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, pressed: 
             _ if bare => t.pal.bg,
             _ => t.pal.card,
         };
-        let fill = if pressed == Some(cap) { mix(base, t.pal.text, 0.16) } else { base };
-        if !bare || cap == Cap::Enter {
+        let fill = if pressed == Some(cap) { mix(base, t.pal.text, 0.24) } else { base };
+        if !bare || cap == Cap::Enter || pressed == Some(cap) {
             c.fill_circle(cx, cy, r.w / 2.0, fill);
         }
         match cap {
@@ -2583,6 +2723,8 @@ pub enum Cap {
     Enter,
     /// Show another layer.
     Show(Layer),
+    /// Tuck the keyboard away.
+    Hide,
 }
 
 /// The keys between the side keys of each row, per layer. Together the
@@ -2602,10 +2744,18 @@ const KEY_GAP_X_DP: f32 = 5.5;
 const KEY_GAP_Y_DP: f32 = 11.0;
 const KEYBOARD_PAD_X_DP: f32 = 3.5;
 const KEYBOARD_TOP_DP: f32 = 9.0;
+/// The strip added above the keys for the key that folds the keyboard away.
+const KEYBOARD_HIDE_DP: f32 = 34.0;
+const KEYBOARD_HIDE_KEY_W_DP: f32 = 52.0;
 /// Room under the last row for the gesture area of the screen's edge.
 const KEYBOARD_BOTTOM_DP: f32 = 26.0;
 
 /// How tall the keyboard is on this theme's screen.
+/// How far a keyboard that folds away slides down to leave the screen.
+pub fn keyboard_hidden(t: &Theme) -> f32 {
+    keyboard_height(t) + t.m.dp(KEYBOARD_HIDE_DP)
+}
+
 pub fn keyboard_height(t: &Theme) -> f32 {
     let m = &t.m;
     m.dp(KEYBOARD_TOP_DP + 4.0 * KEY_H_DP + 3.0 * KEY_GAP_Y_DP + KEYBOARD_BOTTOM_DP)
@@ -2617,7 +2767,7 @@ pub fn keyboard_height(t: &Theme) -> f32 {
 /// key answers a touch, the gaps between keys shared out among their
 /// neighbours.
 #[allow(clippy::too_many_arguments)]
-pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: Layer, pressed: Option<Cap>, enter: &str) -> Vec<(Rect, Cap)> {
+pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: Layer, pressed: Option<Cap>, enter: &str, hide: bool) -> Vec<(Rect, Cap)> {
     let m = &t.m;
     let w = m.w as f32;
     let (panel, key, side, ink, shadow) = if t.dark {
@@ -2625,7 +2775,10 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     } else {
         (Rgba::rgb(224, 226, 231), Rgba::rgb(255, 255, 255), Rgba::rgb(193, 198, 207), Rgba::rgb(0, 0, 0), Rgba::rgb(138, 141, 147))
     };
-    c.fill_rect(0.0, top, w, keyboard_height(t), panel);
+    // A keyboard that folds away carries a narrow strip above its keys,
+    // with the key that folds it at the right.
+    let strip = if hide { m.dp(KEYBOARD_HIDE_DP) } else { 0.0 };
+    c.fill_rect(0.0, top - strip, w, keyboard_height(t) + strip, panel);
     let (pad, gx, gy, kh) = (m.dp(KEYBOARD_PAD_X_DP), m.dp(KEY_GAP_X_DP), m.dp(KEY_GAP_Y_DP), m.dp(KEY_H_DP));
     let kw = (w - pad * 2.0 - gx * 9.0) / 10.0;
     let side_w = kw * 1.35;
@@ -2669,6 +2822,11 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     keys.push((Rect::new(space_x, row_top(3), space_w, kh), Cap::Space));
     keys.push((Rect::new(space_x + space_w + gx, row_top(3), kw, kh), Cap::Char('.')));
     keys.push((Rect::new(w - pad - enter_w, row_top(3), enter_w, kh), Cap::Enter));
+    if hide {
+        let key_w = m.dp(KEYBOARD_HIDE_KEY_W_DP);
+        let key_h = strip - m.dp(8.0);
+        keys.push((Rect::new(w - pad - key_w, top - strip + m.dp(4.0), key_w, key_h), Cap::Hide));
+    }
 
     let radius = m.dp(KEY_RADIUS_DP);
     let glyph_px = m.dp(21.0);
@@ -2680,7 +2838,7 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
             _ if plain => key,
             _ => side,
         };
-        let fill = if pressed == Some(cap) { mix(base, ink, 0.16) } else { base };
+        let fill = if pressed == Some(cap) { mix(base, ink, 0.24) } else { base };
         if !t.dark {
             c.fill_round_rect(r.x, r.y + m.dp(1.0), r.w, r.h, radius, shadow.with_alpha(110));
         }
@@ -2718,6 +2876,12 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
                         c.line(a.0, a.1, b.0, b.1, m.dp(1.6), ink);
                     }
                 }
+            }
+            Cap::Hide => {
+                // A chevron pointing down, as a keyboard folding away.
+                let s = m.dp(8.5);
+                c.line(cx - s, cy - s * 0.5, cx, cy + s * 0.6, m.dp(1.8), ink);
+                c.line(cx, cy + s * 0.6, cx + s, cy - s * 0.5, m.dp(1.8), ink);
             }
             Cap::Backspace => {
                 // A key cap pointing left, with a cross in it.

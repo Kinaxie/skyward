@@ -102,6 +102,7 @@ mod tests {
     fn the_wlan_page_joins_a_network_with_its_password_and_leaves_it() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
+        app.state.vibrate = false;
         let entry = |app: &mut App| app.frame(&f, &i).hits.iter().any(|h| h.action == Action::Open(Screen::Wlan));
         assert!(!entry(&mut app), "a phone whose WLAN is not brought up has no WLAN");
         app.state.wlan = Some(Wlan::default());
@@ -185,6 +186,7 @@ mod tests {
     fn a_network_is_added_by_hand_with_its_name_protection_and_password() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
+        app.state.vibrate = false;
         app.state.wlan = Some(Wlan { power: Power::On, networks: Vec::new(), joined: None });
         app.act(Action::Open(Screen::Wlan), 0);
         tap(&mut app, &f, &i, Action::AddNetwork);
@@ -238,6 +240,7 @@ mod tests {
     fn a_network_added_by_hand_is_turned_down_for_a_name_too_long_and_joined_open_without_its_password() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
+        app.state.vibrate = false;
         app.state.wlan = Some(Wlan { power: Power::On, networks: vec![network("Skyward-Open", -72, Security::Open)], joined: None });
         app.act(Action::Open(Screen::Wlan), 0);
         tap(&mut app, &f, &i, Action::AddNetwork);

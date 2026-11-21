@@ -61,16 +61,31 @@ impl App {
     /// those of `waiting`, the user and the control their screen lock is
     /// answered with, still closed.
     pub fn data_waiting(&mut self, waiting: Option<(u32, Keys)>) {
+        match waiting {
+            Some((user, _)) => self.log(format!("> data opening: user {user} keeps their screen lock")),
+            None => self.log("> data opening: no screen lock, decrypted"),
+        }
         self.state.data = match waiting {
             Some((user, keys)) => Data::Locked { user, keys, checking: false },
             None => Data::Open,
         };
         self.state.code.clear();
+        // A lock to answer is answered on the keys, which the page shows
+        // again each time it asks.
+        self.state.keys_hidden = false;
+        // A recovery that started on the decrypt page and found nothing to
+        // ask goes on to its own pages: the phone has no screen lock, so
+        // there is nothing here for the user to answer.
+        if waiting.is_none() && self.started_on_decrypt && self.screen() == Screen::Decrypt && self.stack.len() == 1 {
+            *self.top_mut() = (Screen::Home, 0.0, Focus::Unset);
+            self.settle_page();
+        }
         self.refresh();
     }
 
     /// The data partition did not open, and why.
     pub fn data_failed(&mut self, why: String) {
+        self.log(format!("! data did not open: {why}"));
         self.state.data = Data::Failed(why);
         self.refresh();
     }
@@ -78,6 +93,7 @@ impl App {
     /// What the user entered did not open their own files: the page asks
     /// again and says why.
     pub fn unlock_failed(&mut self, why: String, now: u64) {
+        self.log(format!("! unlock refused: {why}"));
         if let Data::Locked { checking, .. } = &mut self.state.data {
             *checking = false;
         }
@@ -87,6 +103,7 @@ impl App {
 
     /// Open the data partition, the decrypt page saying so meanwhile.
     pub(super) fn open_data(&mut self) -> Vec<Effect> {
+        self.log("> opening the data partition");
         self.state.data = Data::Opening;
         self.refresh();
         vec![Effect::OpenData]
@@ -186,10 +203,50 @@ mod tests {
     }
 
     #[test]
+    fn the_keyboard_can_be_tucked_away_and_brought_back() {
+        let (f, i) = (fonts(), info());
+        let mut app = opened(Screen::Decrypt, &f, &i);
+        app.data_waiting(Some((0, Keys::Letters)));
+        assert!(keys_shown(&mut app, &f, &i), "the keyboard starts up");
+        tap(&mut app, &f, &i, Action::Type(Cap::Hide));
+        assert!(app.state.keys_hidden && !keys_shown(&mut app, &f, &i), "tucked away, the keys go");
+        tap(&mut app, &f, &i, Action::Keyboard(true));
+        app.tick(1000);
+        assert!(!app.state.keys_hidden && keys_shown(&mut app, &f, &i), "and come back as asked");
+    }
+
+    #[test]
+    fn a_page_that_fits_the_screen_does_not_move_under_a_finger() {
+        let (f, i) = (fonts(), info());
+        let mut app = opened(Screen::Decrypt, &f, &i);
+        app.data_waiting(Some((0, Keys::Digits)));
+        let scroll = app.top().1;
+        app.touch(Touch::Down(600.0, 1500.0), &f, 0);
+        app.touch(Touch::Move(600.0, 900.0), &f, 16);
+        app.touch(Touch::Up, &f, 32);
+        assert_eq!(app.top().1, scroll, "there is nowhere to scroll, so the page holds still");
+    }
+
+    #[test]
+    fn a_recovery_that_starts_on_the_page_goes_on_by_itself_when_there_is_no_lock() {
+        let (f, i) = (fonts(), info());
+        let mut first = App::new(Screen::Decrypt, W, H, PPD);
+        assert_eq!(first.arrive(), vec![Effect::OpenData]);
+        first.data_waiting(Some((0, Keys::Digits)));
+        assert_eq!((first.screen(), first.stack.len()), (Screen::Decrypt, 1), "a screen lock keeps the page up");
+        first.data_waiting(None);
+        assert_eq!((first.screen(), first.stack.len()), (Screen::Home, 1), "no lock, so nothing is asked and the recovery goes on");
+        let mut opened = opened(Screen::Decrypt, &f, &i);
+        opened.data_waiting(None);
+        assert_eq!(opened.screen(), Screen::Decrypt, "a page opened from the home page stays to say the partition is open");
+    }
+
+    #[test]
     fn the_code_typed_on_the_keypad_is_sent_once_and_checked_before_more_is_taken() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
         app.data_waiting(Some((0, Keys::Digits)));
+        app.state.vibrate = false;
         for ch in "1234".chars() {
             tap(&mut app, &f, &i, Action::Type(Cap::Char(ch)));
         }
@@ -203,7 +260,7 @@ mod tests {
         assert!(!keys_shown(&mut app, &f, &i), "nothing more is taken while it is checked");
         app.unlock_failed("the secure world does not recognise that credential".into(), 0);
         assert!(keys_shown(&mut app, &f, &i), "turned down, it is asked for again");
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "with why");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "with why");
         app.data_waiting(None);
         assert_eq!(app.state.data, Data::Open);
     }
@@ -213,8 +270,9 @@ mod tests {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Decrypt, W, H, PPD);
         app.data_waiting(Some((0, Keys::Digits)));
+        app.state.vibrate = false;
         assert!(tap(&mut app, &f, &i, Action::Type(Cap::Enter)).is_empty());
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "the page says to type one first");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "the page says to type one first");
     }
 
     #[test]
@@ -247,7 +305,7 @@ mod tests {
         app.touch(Touch::Move(dots[1].0, dots[1].1 - scroll), &f, 0);
         let fx = app.touch(Touch::Up, &f, 0);
         assert!(fx.is_empty());
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "the page says how many dots it takes");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "the page says how many dots it takes");
     }
 
     #[test]

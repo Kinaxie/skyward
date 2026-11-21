@@ -109,6 +109,7 @@ mod tests {
     fn the_terminal_sends_every_key_to_its_shell() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Settings, W, H, PPD);
+        app.state.vibrate = false;
         assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Terminal)), vec![Effect::StartShell("/".into())], "the page asks for a shell the first time");
         let (rows, cols) = app.term_size(&f);
         assert!(rows >= 20 && cols >= 40, "a screen of {rows} rows by {cols}");
@@ -130,6 +131,7 @@ mod tests {
     fn the_file_managers_button_opens_the_terminal_in_the_folder_shown() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Files, W, H, PPD);
+        app.state.vibrate = false;
         app.set_files("/sdcard/Download".into(), Ok(vec![entry("a.txt", FileKind::File)]), 0);
         assert_eq!(app.frame(&f, &i).button, Some((widgets::Glyph::Terminal, Action::TerminalHere)));
         assert_eq!(tap_button(&mut app, &f, &i, 0), vec![Effect::StartShell("/sdcard/Download".into())], "a shell starts there");

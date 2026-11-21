@@ -105,6 +105,46 @@ pub enum Install {
     Ending,
 }
 
+/// What an event says in the terminal, where it says anything.
+fn said(ev: &Event) -> Option<String> {
+    let line = match ev {
+        Event::Print(line) => format!("| {line}"),
+        Event::Waiting => "> waiting for the computer".to_string(),
+        Event::Checking { size } => format!("> checking {} bytes", size),
+        Event::Ready { version, wipe } => format!("> ready {} (wipe: {wipe})", version.as_deref().unwrap_or("-")),
+        Event::Installing { version } => format!("> installing {}", version.as_deref().unwrap_or("the update")),
+        Event::Overwriting => "> writing over the running system".to_string(),
+        Event::Image { size, partitions, .. } => format!("> image: {} bytes, partitions: {}", size, partitions.join(", ")),
+        Event::Script => "> zip with an install script".to_string(),
+        Event::System { name, .. } => format!("> system {name}"),
+        Event::Running => "> script: running".to_string(),
+        Event::Progress(Stage::Flashing { done, total }) => format!("> flashing: {}%", done * 100 / (*total).max(1)),
+        Event::Progress(Stage::Script { thousandths }) => format!("> script: {}%", thousandths / 10),
+        Event::Progress(stage) => format!("> stage: {stage:?}"),
+        Event::Reflashed(_) => "> Skyward written back into the recovery partitions".to_string(),
+        Event::Wipe => "> wiping all user data".to_string(),
+        Event::Reboot(target) => format!("> reboot: {target}"),
+        Event::Done(outcome) | Event::Finished(outcome) => ended(outcome),
+    };
+    Some(line)
+}
+
+/// What an install's end says in the terminal.
+fn ended(outcome: &Outcome) -> String {
+    match outcome {
+        Outcome::Installed { slot, .. } => format!("> installed to slot {}", slot.letter()),
+        Outcome::Flashed { partition, slots } => {
+            let slots: Vec<&str> = slots.iter().map(|s| s.letter()).collect();
+            format!("> flashed {partition} to {}", slots.join(", "))
+        }
+        Outcome::Ran { .. } => "> install script finished".to_string(),
+        Outcome::SystemInstalled { name } => format!("> {name} installed"),
+        Outcome::Cancelled => "> cancelled".to_string(),
+        Outcome::Refused(why) => format!("! refused: {why:?}"),
+        Outcome::Failed(why) => format!("! failed: {why:?}"),
+    }
+}
+
 /// What a failed install may have left broken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Damage {
@@ -196,7 +236,17 @@ impl App {
         let s = &mut self.state;
         (s.install, s.source, s.package_name) = (install, source, name);
         s.script_output.clear();
+        s.output.clear();
         s.reflash = None;
+    }
+
+    /// One line of the terminal the output page shows.
+    pub(super) fn log(&mut self, line: impl Into<String>) {
+        let out = &mut self.state.output;
+        if out.len() == 2000 {
+            out.remove(0);
+        }
+        out.push(line.into());
     }
 
     /// What the system asked of the recovery before it started.
@@ -223,6 +273,9 @@ impl App {
         }
         if matches!(ev, Event::Image { .. } | Event::Ready { .. } | Event::Script | Event::System { .. } | Event::Done(_) | Event::Finished(_)) {
             self.wake(now);
+        }
+        if let Some(line) = said(&ev) {
+            self.log(line);
         }
         let install = &mut self.state.install;
         match ev {
@@ -380,7 +433,7 @@ mod tests {
         assert_eq!(shown, 0, "nothing on the page to tap while installing");
         app.key(Key::Back, 0);
         assert_eq!(app.screen(), Screen::Installing);
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "it says why");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "it says why");
         app.install(Event::Finished(Outcome::Failed(Failure::Engine(9))), 0);
         assert!(matches!(app.state.install, Install::Finished { damage: Some(Damage::System), .. }));
         // Sending again starts over on the same page, past the wake guard.
@@ -467,7 +520,7 @@ mod tests {
         assert_eq!(fr.rows.as_ref().map(Rows::count), Some(3), "a row to each line it showed");
         app.key(Key::Back, 1000);
         assert_eq!(app.screen(), Screen::Installing, "a script running keeps the page");
-        assert_eq!(app.deadline(1000), Some(1000 + TOAST_MS), "it says why");
+        assert_eq!(toast_due(&app, 1000), Some(1000 + TOAST_MS), "it says why");
         app.install(Event::Finished(Outcome::Ran { wipe_cache: false }), 1000);
         assert_eq!(app.state.install, Install::Finished { outcome: Outcome::Ran { wipe_cache: false }, damage: None });
         let fr = app.frame(&f, &i);

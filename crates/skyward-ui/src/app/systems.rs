@@ -143,7 +143,7 @@ mod tests {
         let held = BootSlots { active: Slot::B, bootable: [false, true], successful: [true, true] };
         app.set_boot_slots(Ok(held));
         assert!(swipe(&mut app, &f, &i, Confirm::Slot).is_empty());
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "B starts next already");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "B starts next already");
         tap(&mut app, &f, &i, Action::PickSlot(Slot::A));
         assert_eq!(swipe(&mut app, &f, &i, Confirm::Slot), vec![Effect::SetSlot(Slot::A)]);
         let switched = BootSlots { active: Slot::A, bootable: [true, true], ..held };
@@ -216,7 +216,7 @@ mod tests {
         // The card tapped darkens and comes back, as a row of a list does.
         app.tick(1000);
         app.key(Key::Back, 1000);
-        assert_eq!((app.screen(), app.deadline(1000)), (Screen::Systems, Some(1000 + TOAST_MS)), "the page stays until they are, and says why");
+        assert_eq!((app.screen(), toast_due(&app, 1000)), (Screen::Systems, Some(1000 + TOAST_MS)), "the page stays until they are, and says why");
         app.systems_work_failed("the store's header does not check", 0);
         assert_eq!(app.state.systems_work, None);
         app.set_systems(Ok(Overview { other_starts: true, ..two_systems() }));

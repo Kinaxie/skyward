@@ -19,6 +19,10 @@ pub struct State {
     /// The time zone the clock and the times on the pages keep, by its
     /// place in [`TIME_ZONES`].
     pub time_zone: usize,
+    /// The clock is told in twelve hours rather than twenty-four.
+    pub hour12: bool,
+    /// The date the charging screen shows, by its place in [`AOD_DATES`].
+    pub aod_date: usize,
     pub vibrate: bool,
     /// How strongly the motor taps, from 0 at the slider's left end to 1
     /// at its right.
@@ -33,6 +37,10 @@ pub struct State {
     /// How many folders of its own the phone keeps logs in on the data
     /// partition, which erasing the logs takes in.
     pub phone_logs: usize,
+    /// The on-screen keyboard of a page that types is tucked away, and how
+    /// far down it has slid from its place.
+    pub keys_hidden: bool,
+    pub keys_drop: f32,
     pub pattern: Vec<usize>,
     /// How far the swipe-to-confirm knob is dragged, 0 to 1.
     pub confirm: f32,
@@ -43,6 +51,9 @@ pub struct State {
     pub package_name: Option<String>,
     /// What the install script last run showed, its latest lines.
     pub script_output: Vec<String>,
+    /// What flashing and installing have said, a line at a time, as a
+    /// terminal shows it.
+    pub output: Vec<String>,
     /// A zip's install script runs only if the zip was signed with one of
     /// the phone's update keys.
     pub check_signature: bool,
@@ -193,6 +204,8 @@ impl Default for State {
             // Two minutes.
             screen_off: 3,
             time_zone: 0,
+            hour12: false,
+            aod_date: 0,
             vibrate: true,
             vibration: SLIDER_START,
             file_transfer: true,
@@ -200,12 +213,15 @@ impl Default for State {
             wipe: [false; WIPES.len()],
             cache_partition: false,
             phone_logs: 0,
+            keys_hidden: false,
+            keys_drop: 0.0,
             pattern: Vec::new(),
             confirm: 0.0,
             install: Install::Idle,
             source: Source::Computer,
             package_name: None,
             script_output: Vec::new(),
+            output: Vec::new(),
             check_signature: false,
             recovery_partitions: false,
             keep_recovery: true,

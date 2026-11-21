@@ -65,6 +65,12 @@ pub(super) fn spot(app: &mut App, f: &Fonts, i: &DeviceInfo, action: Action) -> 
     (x, y - scroll)
 }
 
+/// When the message said at `at` goes away, after it has come in: the
+/// toast slides in before it stands for its time.
+pub(super) fn toast_due(app: &App, at: u64) -> Option<u64> {
+    app.deadline(at + TOAST_IN_MS)
+}
+
 pub(super) fn tap(app: &mut App, f: &Fonts, i: &DeviceInfo, action: Action) -> Vec<Effect> {
     tap_at(app, f, i, action, 0)
 }

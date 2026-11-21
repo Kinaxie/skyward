@@ -66,6 +66,13 @@ impl App {
             d = pull;
         }
         let max = self.max_scroll();
+        // A page that fits the screen stays where it is under a finger:
+        // there is nowhere to go, and pulling it would carry its fixed
+        // parts, such as a keyboard, with it.
+        if max == 0.0 {
+            self.pull = 0.0;
+            return;
+        }
         let top = self.top_mut();
         let next = top.1 + d;
         top.1 = next.clamp(0.0, max);
@@ -234,7 +241,8 @@ mod tests {
     #[test]
     fn pulling_past_the_top_resists_and_springs_back() {
         let f = fonts();
-        let mut app = App::new(Screen::Reboot, W, H, PPD);
+        let mut app = App::new(Screen::Settings, W, H, PPD);
+        app.frame(&f, &info());
         app.touch(Touch::Down(700.0, 1000.0), &f, 0);
         app.touch(Touch::Move(700.0, 1300.0), &f, 100);
         app.touch(Touch::Move(700.0, 1800.0), &f, 600);

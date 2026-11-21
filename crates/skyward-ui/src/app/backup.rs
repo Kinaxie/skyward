@@ -186,7 +186,7 @@ mod tests {
         let mut app = opened(Screen::Backup, &f, &i);
         assert_eq!(app.state.backup, [true, true, false, true]);
         assert!(swipe(&mut app, &f, &i, Confirm::Backup).is_empty(), "internal storage waits for the data partition");
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "and says so");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "and says so");
         // The owner's files open first; another user's still wait.
         app.data_waiting(Some((10, Keys::Digits)));
         let first = Effect::Backup { parts: [true, true, false, true], place: Place::Storage, compress: false, verify: true };
@@ -269,7 +269,7 @@ mod tests {
         app.set_backups(vec![found(Place::Storage, 1_792_348_260, [false, false, true, false])]);
         tap(&mut app, &f, &i, Action::OpenBackup(0));
         assert!(swipe(&mut app, &f, &i, Confirm::Restore).is_empty());
-        assert_eq!(app.deadline(0), Some(TOAST_MS), "the page says to decrypt first");
+        assert_eq!(toast_due(&app, 0), Some(TOAST_MS), "the page says to decrypt first");
         app.data_waiting(None);
         let fx = swipe(&mut app, &f, &i, Confirm::Restore);
         assert!(matches!(&fx[..], [Effect::Restore { parts: [false, false, true, false], .. }]), "{fx:?}");

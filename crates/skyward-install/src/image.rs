@@ -178,18 +178,27 @@ pub fn device(dir: &Path, name: &str, slot: Slot) -> PathBuf {
     dir.join(format!("{name}{}", slot.suffix()))
 }
 
+/// The other partitions an image of any kind may be written to, after the
+/// ones its kind fits: a boot image can be put in any of them, though some
+/// may not suit it.
+const ALSO: [&str; 8] = ["boot", "init_boot", "vendor_boot", "recovery", "dtbo", "vbmeta", "vbmeta_system", "vbmeta_vendor"];
+
 /// The partitions `kind` fits that this phone has in both slots, among the
-/// links in `dir`, the likeliest first.
+/// links in `dir`, the likeliest first, then the other partitions an image
+/// may be written to.
 pub fn partitions(kind: ImageKind, dir: &Path) -> Result<Vec<&'static str>> {
     let mut found = Vec::new();
-    for name in kind.partitions() {
+    for name in kind.partitions().iter().copied().chain(ALSO) {
+        if found.contains(&name) {
+            continue;
+        }
         let mut has = true;
         for slot in [Slot::A, Slot::B] {
             let path = device(dir, name, slot);
             has &= path.try_exists().with_context(|| format!("look for {}", path.display()))?;
         }
         if has {
-            found.push(*name);
+            found.push(name);
         }
     }
     Ok(found)

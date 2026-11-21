@@ -239,6 +239,18 @@ impl App {
                 self.state.screen_off = k;
                 self.refresh();
             }
+            Action::Hour12(on) => {
+                if self.state.hour12 != on {
+                    self.state.hour12 = on;
+                    self.refresh();
+                }
+            }
+            Action::AodDate(k) => {
+                if k < AOD_DATES.len() && self.state.aod_date != k {
+                    self.state.aod_date = k;
+                    self.refresh();
+                }
+            }
             Action::TimeZone(k) => {
                 self.state.time_zone = k;
                 self.refresh();
@@ -299,6 +311,7 @@ impl App {
                 self.state.next_slot = Some(slot);
                 self.refresh();
             }
+            Action::Keyboard(shown) => self.slide_keys(!shown, now),
             Action::Type(cap) if self.screen() == Screen::Terminal => return self.term_typed(cap),
             Action::Type(cap) if self.screen() == Screen::Editor => self.edit_typed(cap),
             Action::Type(cap) => return self.type_key(cap, now),
@@ -609,6 +622,7 @@ impl App {
                 self.state.layer = if self.state.layer == Layer::Shifted { Layer::Letters } else { Layer::Shifted };
             }
             Cap::Show(layer) => self.state.layer = layer,
+            Cap::Hide => self.slide_keys(true, now),
             Cap::Enter => match self.screen() {
                 Screen::Search => {
                     if let Some(first) = search::find_on(&self.state.search, l, |screen| self.state.offers(screen)).first() {

@@ -5,9 +5,18 @@ use super::*;
 
 impl App {
     pub fn touch(&mut self, ev: Touch, f: &Fonts, now: u64) -> Vec<Effect> {
-        // A finger on the dark panel lights nothing, as on the phone's own
-        // system, where the power key lights it.
+        // A finger on the dark panel brings up the always-on screen; a
+        // second one lights the panel itself, as on the phone's own system.
         if !self.display_on {
+            if matches!(ev, Touch::Down(..)) {
+                match self.aod {
+                    Some(_) => self.wake(now),
+                    None => {
+                        self.aod = Some(now);
+                        self.dirty = true;
+                    }
+                }
+            }
             return Vec::new();
         }
         // A finger on the charging screen sends it away for the page, and
@@ -106,6 +115,11 @@ impl App {
                         .map(|h| (h.action, h.rect))
                 };
                 let action = hit.map(|h| h.0);
+                // A tap of the motor under each key of the on-screen
+                // keyboard or keypad, as the stock ones give.
+                if self.state.vibrate && matches!(action, Some(Action::Type(_))) {
+                    fx.push(Effect::Haptic);
+                }
                 // A row of the page darkens behind its words a moment after
                 // the finger lands on it, if the finger stays.
                 let row = hit
@@ -124,6 +138,11 @@ impl App {
                     Some((Action::Pattern, _)) => {
                         self.state.pattern.clear();
                         self.trace(&t, x, y + scroll);
+                        // Each dot joined taps the motor, as the system's
+                        // own pattern lock does.
+                        if self.state.vibrate && !self.state.pattern.is_empty() {
+                            fx.push(Effect::Haptic);
+                        }
                         Drag::Pattern
                     }
                     _ => {
@@ -191,7 +210,11 @@ impl App {
                     self.drag = Drag::Confirm { which, track, grab };
                 }
                 Drag::Pattern => {
+                    let joined = self.state.pattern.len();
                     self.trace(&t, x, y + scroll);
+                    if self.state.vibrate && self.state.pattern.len() > joined {
+                        fx.push(Effect::Haptic);
+                    }
                     self.drag = Drag::Pattern;
                 }
                 Drag::History { last, carry, pitch } => {
