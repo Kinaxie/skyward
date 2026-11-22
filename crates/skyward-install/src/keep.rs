@@ -5,6 +5,7 @@
 use crate::image;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
+use skyward_sys::kmsg;
 use skyward_vab::Slot;
 use std::fs::File;
 use std::io::{Cursor, Read};
@@ -31,12 +32,27 @@ pub struct Kept {
 
 impl Kept {
     /// Hold this recovery from the recovery partitions among the links in
-    /// `dir`, before an install; none when the partition of the `current`
-    /// slot does not hold Skyward, as when it was started without being
-    /// flashed.
+    /// `dir`, before an install; none when the phone has no partition of
+    /// that name for both slots, and none when the partition of the
+    /// `current` slot does not hold Skyward, as when it was started
+    /// without being flashed.
     pub fn hold(dir: &Path, current: Slot) -> Result<Option<Kept>> {
-        let (a, image_a) = read(&image::device(dir, PARTITION, Slot::A))?;
-        let (b, image_b) = read(&image::device(dir, PARTITION, Slot::B))?;
+        // A phone whose recovery lives elsewhere, or one whose links are
+        // not the ones this names, has no partition to keep Skyward in:
+        // that is nothing to keep, not a failure, and it is said here
+        // rather than turned off ahead of the install without a word.
+        let paths = [image::device(dir, PARTITION, Slot::A), image::device(dir, PARTITION, Slot::B)];
+        for path in &paths {
+            if !path.try_exists().with_context(|| format!("look for {}", path.display()))? {
+                let _ = kmsg(&format!(
+                    "keep: {} is not there, so there is no recovery partition to keep Skyward in and none is kept",
+                    path.display()
+                ));
+                return Ok(None);
+            }
+        }
+        let (a, image_a) = read(&paths[0])?;
+        let (b, image_b) = read(&paths[1])?;
         let (held, image) = match current {
             Slot::A => (a, image_a),
             Slot::B => (b, image_b),

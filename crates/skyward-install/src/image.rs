@@ -187,8 +187,11 @@ const ALSO: [&str; 8] = ["boot", "init_boot", "vendor_boot", "recovery", "dtbo",
 /// links in `dir`, the likeliest first, then the other partitions an image
 /// may be written to.
 pub fn partitions(kind: ImageKind, dir: &Path) -> Result<Vec<&'static str>> {
+    // A boot image may go to any of the boot family; a vbmeta or dtbo image
+    // has its own partitions and is not offered the boot ones.
+    let also: &[&str] = if matches!(kind, ImageKind::Boot { .. }) { &ALSO } else { &[] };
     let mut found = Vec::new();
-    for name in kind.partitions().iter().copied().chain(ALSO) {
+    for name in kind.partitions().iter().copied().chain(also.iter().copied()) {
         if found.contains(&name) {
             continue;
         }
@@ -424,7 +427,7 @@ mod tests {
             std::fs::File::create(dir.path().join(name)).unwrap();
         }
         let both = ImageKind::Boot { kernel: true, ramdisk: Ramdisk::Recovery };
-        assert_eq!(partitions(both, dir.path()).unwrap(), ["recovery", "boot"]);
+        assert_eq!(partitions(both, dir.path()).unwrap(), ["recovery", "boot", "init_boot", "vbmeta"]);
         assert_eq!(partitions(ImageKind::Vbmeta, dir.path()).unwrap(), ["vbmeta"]);
         assert!(partitions(ImageKind::Dtbo, dir.path()).unwrap().is_empty());
     }
