@@ -74,7 +74,7 @@ pub const ENTRIES: &[Entry] = &[
     entry(page::TIME_ZONE, SETTINGS, Screen::TimeZone, keys::TIME_ZONE),
     entry(texts::local::TIME_FORMAT, SETTINGS, Screen::TimeFormat, same("shijiangeshi sjgs timeformat 12 24")),
     entry(texts::local::ALWAYS_ON_DATE, SETTINGS, Screen::AodDate, same("xipingriqi xprq aod date")),
-    entry(texts::local::OUTPUT_TITLE, SETTINGS, Screen::Output, same("shuchu sc output log")),
+    entry(texts::local::OUTPUT_TITLE, ADVANCED, Screen::Output, same("shuchu sc output log")),
     entry(page::REBOOT, HOME, Screen::Reboot, keys::REBOOT),
     entry(texts::slot::BOOT_SLOT, page::REBOOT, Screen::Slot, keys::SLOT),
     entry(page::ABOUT, SETTINGS, Screen::About, keys::ABOUT),

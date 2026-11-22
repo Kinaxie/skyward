@@ -2148,6 +2148,7 @@ pub fn advanced(cx: &Ctx) -> Frame {
         Row::new(l.pick(texts::page::RELABEL)).icon(PURPLE, Icon::Shield),
         Row::new(l.pick(texts::page::FILESYSTEMS)).icon(RED, Icon::Mount),
         Row::new(l.pick(texts::page::LOGS)).icon(ORANGE, Icon::Log),
+        Row::new(l.pick(texts::local::OUTPUT_TITLE)).icon(SLATE, Icon::Terminal),
         Row::new(l.pick(texts::page::UPDATE)).icon(GREEN, Icon::Layers).trail(Trail::Value(update_value(cx))),
     ]);
     let out = hits(&tools.rows, &[
@@ -2156,6 +2157,7 @@ pub fn advanced(cx: &Ctx) -> Frame {
         Action::Open(Screen::Relabel),
         Action::Open(Screen::Filesystems),
         Action::Open(Screen::Logs),
+        Action::Open(Screen::Output),
         Action::Open(Screen::Update),
     ]);
     Frame::new(t, c, out, l.pick(texts::page::ADVANCED), top)
