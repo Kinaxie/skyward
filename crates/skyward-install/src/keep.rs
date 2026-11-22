@@ -84,7 +84,16 @@ fn read(path: &Path) -> Result<(Held, Vec<u8>)> {
     image::drop_cache(&file).with_context(|| format!("drop the cached pages of {}", path.display()))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).with_context(|| format!("read {}", path.display()))?;
-    let skyward = image::is_skyward(&mut Cursor::new(&bytes)).with_context(|| format!("look into {}", path.display()))?;
+    // A recovery partition may hold something this recovery cannot read as a
+    // Skyward ramdisk, such as another recovery's image: that is a partition
+    // with no Skyward to keep, not a reason to refuse the install.
+    let skyward = match image::is_skyward(&mut Cursor::new(&bytes)) {
+        Ok(skyward) => skyward,
+        Err(e) => {
+            let _ = kmsg(&format!("keep: {} is not read as a Skyward recovery: {e:#}", path.display()));
+            false
+        }
+    };
     Ok((Held { digest: Sha256::digest(&bytes).into(), skyward }, bytes))
 }
 

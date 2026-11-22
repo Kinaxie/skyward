@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use skyward_vab::Slot;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 const BOOT_MAGIC: &[u8] = b"ANDROID!";
@@ -217,6 +218,7 @@ pub fn flash<R: Read + Seek>(image: &mut R, len: u64, devices: &[PathBuf], progr
     let mut outs = Vec::with_capacity(devices.len());
     for path in devices {
         let mut f = OpenOptions::new().read(true).write(true).open(path).with_context(|| format!("open {}", path.display()))?;
+        make_writable(&f).with_context(|| format!("clear the read-only flag of {}", path.display()))?;
         let size = f.seek(SeekFrom::End(0)).with_context(|| format!("find the size of {}", path.display()))?;
         f.seek(SeekFrom::Start(0)).with_context(|| format!("rewind {}", path.display()))?;
         outs.push((path, f, size));
@@ -275,6 +277,36 @@ pub fn flash<R: Read + Seek>(image: &mut R, len: u64, devices: &[PathBuf], progr
 }
 
 pub(crate) use skyward_block::drop_cache;
+
+/// Clear the read-only flag a block device may carry after an update wrote
+/// it, as fastboot does before writing a partition. A file that is not a
+/// block device has no flag to clear.
+fn make_writable(file: &std::fs::File) -> io::Result<bool> {
+    let mut flag: libc::c_int = 0;
+    // BLKROGET: _IO(0x12, 94)
+    if unsafe { libc::ioctl(file.as_raw_fd(), 0x125e as _, &mut flag) } != 0 {
+        let e = io::Error::last_os_error();
+        return match e.raw_os_error() {
+            Some(libc::ENOTTY) => Ok(false),
+            _ => Err(e),
+        };
+    }
+    if flag == 0 {
+        return Ok(false);
+    }
+    let clear: libc::c_int = 0;
+    // BLKROSET: _IO(0x12, 93), zero clears the flag.
+    if unsafe { libc::ioctl(file.as_raw_fd(), 0x125d as _, &clear) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::ioctl(file.as_raw_fd(), 0x125e as _, &mut flag) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if flag != 0 {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "the partition is still read-only"));
+    }
+    Ok(true)
+}
 
 /// Images made up for the tests here and in the modules that look into
 /// partitions.

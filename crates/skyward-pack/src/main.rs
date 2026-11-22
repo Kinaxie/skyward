@@ -140,6 +140,14 @@ fn main() -> Result<()> {
             if let Some(e) = rd.entries.iter().find(|e| e.name == "FFiles" || e.name.starts_with("twres")) {
                 anyhow::bail!("{} holds {}, which is not a stock recovery", stock.display(), e.name);
             }
+            // A package from another build is signed with keys this recovery
+            // does not carry. update_engine skips payload signature
+            // verification when no OTA certificates are present, as a custom
+            // recovery cannot know the signer's key.
+            if rd.find("system/etc/security/otacerts.zip").is_some() {
+                rd.remove("system/etc/security/otacerts.zip");
+                println!("dropped system/etc/security/otacerts.zip: payload signatures are not checked");
+            }
             let read = |p: &PathBuf| std::fs::read(p).with_context(|| format!("read {}", p.display()));
             skyward_config::DeviceConfig::load(&config)?;
             rd.replace(paths::RECOVERY, read(&binary)?)?;

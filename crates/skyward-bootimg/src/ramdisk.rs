@@ -203,11 +203,15 @@ impl Ramdisk {
         }
     }
 
+    /// Take the entry `name` out of the ramdisk, where it is there.
+    pub fn remove(&mut self, name: &str) {
+        self.entries.retain(|e| e.name != name);
+    }
+
     /// Point `name` to `target`: a link already there is pointed anew, and
     /// otherwise a root-owned link is added, creating missing parent
     /// directories.
-    pub fn link(&mut self, name: &str, target: &str) -> Result<()> {
-        match self.entries.iter_mut().find(|e| e.name == name) {
+    pub fn link(&mut self, name: &str, target: &str) -> Result<()> {        match self.entries.iter_mut().find(|e| e.name == name) {
             Some(e) if e.mode & S_IFMT == S_IFLNK => {
                 e.data = target.as_bytes().to_vec();
                 Ok(())
