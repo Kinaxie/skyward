@@ -524,15 +524,17 @@ pub fn avb_page(cx: &Ctx) -> Frame {
             if st.verification { l.pick(texts::local::AVB_ON) } else { l.pick(texts::local::AVB_OFF) }
         ),
     };
-    let facts = widgets::list(&mut c, t, f, top, &[Row::new(status.as_str())]);
+    let facts = widgets::list(&mut c, t, f, top, &[Row::new(status.as_str()).trail(Trail::None)]);
     let mut y = facts.bottom + t.m.dp(10.0);
-    let rows = [
-        Row::new("dm-verity").trail(Trail::Switch(s.avb_verity)),
-        Row::new(l.pick(texts::local::AVB_BOOT_VERIFICATION)).trail(Trail::Switch(s.avb_verification)),
-    ];
-    let switches = widgets::list(&mut c, t, f, y, &rows);
-    out.extend(hits(&switches.rows, &[Action::Toggle(Switch::AvbVerity), Action::Toggle(Switch::AvbVerification)]));
-    y = switches.bottom;
+    if matches!(s.avb.as_ref(), Some(Ok(_))) {
+        let rows = [
+            Row::new("dm-verity").trail(Trail::Switch(s.avb_verity)),
+            Row::new(l.pick(texts::local::AVB_BOOT_VERIFICATION)).trail(Trail::Switch(s.avb_verification)),
+        ];
+        let switches = widgets::list(&mut c, t, f, y, &rows);
+        out.extend(hits(&switches.rows, &[Action::Toggle(Switch::AvbVerity), Action::Toggle(Switch::AvbVerification)]));
+        y = switches.bottom;
+    }
     if let Some(Ok(st)) = &s.avb
         && (s.avb_verity != st.verity || s.avb_verification != st.verification)
     {
