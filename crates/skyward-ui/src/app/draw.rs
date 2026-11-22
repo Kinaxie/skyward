@@ -71,6 +71,13 @@ impl App {
                 self.bar.jump(bar);
             }
         }
+        // The page the recovery starts on has nothing to go back to, so it
+        // shows no way back even where its layout draws one.
+        if self.stack.len() <= 1
+            && let Some(frame) = self.frame.as_mut()
+        {
+            frame.back = false;
+        }
         self.frame.as_ref().expect("rendered above")
     }
 

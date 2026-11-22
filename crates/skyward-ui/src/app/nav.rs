@@ -470,4 +470,13 @@ mod tests {
         tap(&mut app, &f, &i, Action::Open(Screen::Slot));
         assert_eq!(app.screen(), Screen::Slot);
     }
+
+    #[test]
+    fn the_starting_page_shows_no_back_control() {
+        let (f, i) = (fonts(), info());
+        let mut app = App::new(Screen::Decrypt, W, H, PPD);
+        assert!(!app.frame(&f, &i).back, "the recovery starts on the decrypt page");
+        app.open(Screen::Settings);
+        assert!(app.frame(&f, &i).back, "a page opened over it goes back");
+    }
 }
