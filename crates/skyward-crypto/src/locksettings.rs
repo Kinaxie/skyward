@@ -2,11 +2,16 @@
 //! user. Among them is which of the protectors the phone keeps for a user
 //! is the one that user's own credential opens.
 
-use anyhow::{Context, Result};
-use std::path::Path;
+use anyhow::{bail, Context, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Where the phone keeps them.
 pub const DATABASE: &str = "/data/system/locksettings.db";
+
+const NAME: &str = "locksettings.db";
+const WAL: &str = "-wal";
+const SHM: &str = "-shm";
 
 /// The name the protector of a user's own secret is recorded under. Its
 /// value is the number that protector's files are named after.
@@ -28,11 +33,11 @@ pub fn current_protector(database: &Path, user: u32) -> Result<Option<String>> {
 }
 
 /// What the lock settings keep for `user` under `name`, where they keep
-/// anything. The database is opened as it lies, without being written to
-/// or waiting on anyone, since the phone it belongs to is not running; it
-/// is written without a log of its own, so what it holds is all of it.
+/// anything. The phone writes the database with a log, so it is read from
+/// a copy whose log has been folded in.
 fn value(database: &Path, name: &str, user: u32) -> Result<Option<String>> {
-    let at = format!("file:{}?immutable=1", database.display());
+    let copy = Copy::of(database)?;
+    let at = format!("file:{}?immutable=1", copy.db.display());
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
     let db = rusqlite::Connection::open_with_flags(&at, flags).with_context(|| format!("open {}", database.display()))?;
     let mut query = db
@@ -45,6 +50,62 @@ fn value(database: &Path, name: &str, user: u32) -> Result<Option<String>> {
         return Ok(None);
     };
     row.get(0).with_context(|| format!("read what {name} is for user {user}"))
+}
+
+/// A writable copy of the database and the files SQLite keeps beside it.
+struct Copy {
+    folder: PathBuf,
+    db: PathBuf,
+}
+
+impl Copy {
+    fn of(database: &Path) -> Result<Copy> {
+        let folder = scratch_folder()?;
+        let db = folder.join(NAME);
+        fs::copy(database, &db).with_context(|| format!("copy {} to {}", database.display(), db.display()))?;
+        for tail in [WAL, SHM] {
+            let from = beside(database, tail);
+            if from.is_file() {
+                let to = beside(&db, tail);
+                fs::copy(&from, &to).with_context(|| format!("copy {} to {}", from.display(), to.display()))?;
+            }
+        }
+        let copy = Copy { folder, db };
+        copy.fold_the_log_in().with_context(|| format!("fold the log of {} into its copy", database.display()))?;
+        Ok(copy)
+    }
+
+    fn fold_the_log_in(&self) -> Result<()> {
+        let db = rusqlite::Connection::open(&self.db).context("open the copy of the lock settings")?;
+        let _ = db.query_row("SELECT count(*) FROM locksettings", [], |row| row.get::<_, i64>(0));
+        drop(db);
+        Ok(())
+    }
+}
+
+impl Drop for Copy {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
+}
+
+fn scratch_folder() -> Result<PathBuf> {
+    let base = std::env::temp_dir();
+    for n in 0..32u32 {
+        let at = base.join(format!("skyward-locksettings-{}-{n}", std::process::id()));
+        match fs::create_dir(&at) {
+            Ok(()) => return Ok(at),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("make {}", at.display())),
+        }
+    }
+    bail!("no folder under {} could be made for a copy of the lock settings", base.display())
+}
+
+fn beside(database: &Path, tail: &str) -> PathBuf {
+    let mut name = database.as_os_str().to_os_string();
+    name.push(tail);
+    PathBuf::from(name)
 }
 
 #[cfg(test)]
@@ -62,6 +123,45 @@ mod tests {
             db.execute("INSERT INTO locksettings (name, user, value) VALUES (?1, ?2, ?3)", (name, user, value)).unwrap();
         }
         at
+    }
+
+
+    /// A database copied while its newest value is still only in the log.
+    fn scratch_with_a_log(test: &str, older: &str, newest: &str) -> std::path::PathBuf {
+        let live = std::env::temp_dir().join(format!("skyward-locksettings-{test}-{}-live.db", std::process::id()));
+        let at = std::env::temp_dir().join(format!("skyward-locksettings-{test}-{}.db", std::process::id()));
+        for path in [&live, &at] {
+            for tail in ["", WAL, SHM] {
+                let _ = std::fs::remove_file(beside(path, tail));
+            }
+        }
+        let db = rusqlite::Connection::open(&live).unwrap();
+        db.pragma_update(None, "journal_mode", "WAL").unwrap();
+        db.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        db.execute("CREATE TABLE locksettings (_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, user INTEGER, value TEXT)", ()).unwrap();
+        db.execute("INSERT INTO locksettings (name, user, value) VALUES ('sp-handle', 0, ?1)", (older,)).unwrap();
+        db.pragma_update(None, "wal_checkpoint", "TRUNCATE").unwrap();
+        db.execute("UPDATE locksettings SET value = ?1 WHERE name = 'sp-handle'", (newest,)).unwrap();
+        std::fs::copy(&live, &at).unwrap();
+        for tail in [WAL, SHM] {
+            if beside(&live, tail).is_file() {
+                std::fs::copy(beside(&live, tail), beside(&at, tail)).unwrap();
+            }
+        }
+        drop(db);
+        for tail in ["", WAL, SHM] {
+            let _ = std::fs::remove_file(beside(&live, tail));
+        }
+        at
+    }
+
+    #[test]
+    fn the_screen_lock_changed_last_is_the_one_read() {
+        let at = scratch_with_a_log("wal", "111", "222");
+        assert_eq!(value(&at, "sp-handle", 0).unwrap().as_deref(), Some("222"));
+        for tail in ["", WAL, SHM] {
+            let _ = std::fs::remove_file(beside(&at, tail));
+        }
     }
 
     #[test]
