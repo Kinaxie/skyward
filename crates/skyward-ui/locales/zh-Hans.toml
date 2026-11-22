@@ -292,6 +292,7 @@ boot = "启动镜像"
 vendor_boot = "vendor_boot 镜像"
 dtbo = "dtbo 镜像"
 vbmeta = "vbmeta 镜像"
+super_image = "super 镜像"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "包含内核和恢复模式 ramdisk"
@@ -302,6 +303,7 @@ generic_ramdisk = "仅包含通用 ramdisk"
 vendor_ramdisk = "包含厂商 ramdisk 和设备树"
 overlays = "包含设备树叠加层"
 verified_boot_data = "包含启动验证数据"
+all_partitions = "包含两个槽位的逻辑分区"
 
 [image.role]
 boot = "内核"
@@ -313,6 +315,7 @@ vbmeta = "启动验证数据"
 vbmeta_system = "系统分区的验证数据"
 vbmeta_vendor = "厂商分区的验证数据"
 partition = "分区"
+super_partition = "所有逻辑分区"
 
 [screen_off]
 never = "永不"

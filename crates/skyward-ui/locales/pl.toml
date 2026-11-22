@@ -295,6 +295,7 @@ boot = "Obraz rozruchowy"
 vendor_boot = "Obraz vendor_boot"
 dtbo = "Obraz dtbo"
 vbmeta = "Obraz vbmeta"
+super_image = "obraz super"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Zawiera jądro i ramdisk recovery"
@@ -305,6 +306,7 @@ generic_ramdisk = "Zawiera tylko ogólny ramdisk"
 vendor_ramdisk = "Zawiera ramdisk producenta i drzewo urządzeń"
 overlays = "Zawiera nakładki drzewa urządzeń"
 verified_boot_data = "Zawiera dane weryfikacji rozruchu"
+all_partitions = "Zawiera partycje logiczne obu slotów"
 
 [image.role]
 boot = "Jądro"
@@ -316,6 +318,7 @@ vbmeta = "Dane weryfikacji rozruchu"
 vbmeta_system = "Dane weryfikacji partycji systemowych"
 vbmeta_vendor = "Dane weryfikacji partycji producenta"
 partition = "Partycja"
+super_partition = "Wszystkie partycje logiczne"
 
 [screen_off]
 never = "Nigdy"

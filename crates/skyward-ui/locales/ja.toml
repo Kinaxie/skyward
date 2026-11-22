@@ -292,6 +292,7 @@ boot = "ブートイメージ"
 vendor_boot = "vendor_boot イメージ"
 dtbo = "dtbo イメージ"
 vbmeta = "vbmeta イメージ"
+super_image = "super イメージ"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "カーネルとリカバリ ramdisk を含む"
@@ -302,6 +303,7 @@ generic_ramdisk = "汎用 ramdisk のみを含む"
 vendor_ramdisk = "ベンダー ramdisk とデバイスツリーを含む"
 overlays = "デバイスツリーオーバーレイを含む"
 verified_boot_data = "確認付きブートのデータを含む"
+all_partitions = "両スロットの論理パーティションを含む"
 
 [image.role]
 boot = "カーネル"
@@ -313,6 +315,7 @@ vbmeta = "確認付きブートのデータ"
 vbmeta_system = "システムパーティションの検証データ"
 vbmeta_vendor = "ベンダーパーティションの検証データ"
 partition = "パーティション"
+super_partition = "すべての論理パーティション"
 
 [screen_off]
 never = "消灯しない"

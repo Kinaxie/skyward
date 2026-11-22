@@ -344,6 +344,7 @@ boot = "Boot image"
 vendor_boot = "vendor_boot image"
 dtbo = "dtbo image"
 vbmeta = "vbmeta image"
+super_image = "super image"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Holds a kernel and a recovery ramdisk"
@@ -354,6 +355,7 @@ generic_ramdisk = "Holds a generic ramdisk alone"
 vendor_ramdisk = "Holds the vendor ramdisk and device tree"
 overlays = "Holds device tree overlays"
 verified_boot_data = "Holds verified boot data"
+all_partitions = "Holds the logical partitions of both slots"
 
 # What a partition an image can go to is for.
 [image.role]
@@ -366,6 +368,7 @@ vbmeta = "Verified boot data"
 vbmeta_system = "Verification data of the system partitions"
 vbmeta_vendor = "Verification data of the vendor partitions"
 partition = "Partition"
+super_partition = "All logical partitions"
 
 # How long the screen stays on with nothing touched.
 [screen_off]

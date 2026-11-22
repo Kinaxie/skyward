@@ -292,6 +292,7 @@ boot = "啟動映像檔"
 vendor_boot = "vendor_boot 映像檔"
 dtbo = "dtbo 映像檔"
 vbmeta = "vbmeta 映像檔"
+super_image = "super 映像"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "包含核心和復原模式 ramdisk"
@@ -302,6 +303,7 @@ generic_ramdisk = "僅包含通用 ramdisk"
 vendor_ramdisk = "包含廠商 ramdisk 和裝置樹"
 overlays = "包含裝置樹疊加層"
 verified_boot_data = "包含啟動驗證資料"
+all_partitions = "包含兩個槽位的邏輯分區"
 
 [image.role]
 boot = "核心"
@@ -313,6 +315,7 @@ vbmeta = "啟動驗證資料"
 vbmeta_system = "系統分割區的驗證資料"
 vbmeta_vendor = "廠商分割區的驗證資料"
 partition = "分割區"
+super_partition = "所有邏輯分區"
 
 [screen_off]
 never = "永不"

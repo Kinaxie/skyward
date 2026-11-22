@@ -292,6 +292,7 @@ boot = "Image boot"
 vendor_boot = "Image vendor_boot"
 dtbo = "Image dtbo"
 vbmeta = "Image vbmeta"
+super_image = "image super"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Berisi kernel dan ramdisk recovery"
@@ -302,6 +303,7 @@ generic_ramdisk = "Hanya berisi ramdisk generik"
 vendor_ramdisk = "Berisi ramdisk vendor dan device tree"
 overlays = "Berisi overlay device tree"
 verified_boot_data = "Berisi data booting terverifikasi"
+all_partitions = "Berisi partisi logis kedua slot"
 
 [image.role]
 boot = "Kernel"
@@ -313,6 +315,7 @@ vbmeta = "Data booting terverifikasi"
 vbmeta_system = "Data verifikasi partisi sistem"
 vbmeta_vendor = "Data verifikasi partisi vendor"
 partition = "Partisi"
+super_partition = "Semua partisi logis"
 
 [screen_off]
 never = "Tidak pernah"

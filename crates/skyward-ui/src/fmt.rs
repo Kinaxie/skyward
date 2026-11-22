@@ -760,6 +760,7 @@ pub fn image_kind(l: Lang, kind: ImageKind) -> (&'static str, &'static str) {
         ImageKind::VendorBoot => (image::VENDOR_BOOT, holds::VENDOR_RAMDISK),
         ImageKind::Dtbo => (image::DTBO, holds::OVERLAYS),
         ImageKind::Vbmeta => (image::VBMETA, holds::VERIFIED_BOOT_DATA),
+        ImageKind::Super => (image::SUPER_IMAGE, holds::ALL_PARTITIONS),
     };
     (l.pick(name), l.pick(holds))
 }
@@ -776,6 +777,7 @@ pub fn partition_role(l: Lang, name: &str) -> &'static str {
         "vbmeta" => role::VBMETA,
         "vbmeta_system" => role::VBMETA_SYSTEM,
         "vbmeta_vendor" => role::VBMETA_VENDOR,
+        "super" => role::SUPER_PARTITION,
         _ => role::PARTITION,
     })
 }

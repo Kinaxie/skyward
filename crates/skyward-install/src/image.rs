@@ -18,6 +18,10 @@ const VENDOR_BOOT_MAGIC: &[u8] = b"VNDRBOOT";
 /// A dtbo image starts with this, big-endian.
 const DTBO_MAGIC: &[u8] = &[0xd7, 0xb7, 0xab, 0x1e];
 const VBMETA_MAGIC: &[u8] = b"AVB0";
+const SPARSE_MAGIC: &[u8] = &[0x3a, 0xff, 0x26, 0xed];
+/// `lpmake` leaves a page clear, then opens its geometry with this.
+const SUPER_MAGIC: [u8; 4] = 0x616c_4467u32.to_le_bytes();
+const SUPER_AT: u64 = 4096;
 
 /// How a ramdisk is packed, by its first bytes: LZ4 in the legacy framing
 /// Android uses or the standard one, gzip, or a bare newc archive.
@@ -43,6 +47,8 @@ pub enum ImageKind {
     VendorBoot,
     Dtbo,
     Vbmeta,
+    /// A raw super image, holding both slots' logical partitions.
+    Super,
 }
 
 /// The ramdisk a boot image carries.
@@ -68,6 +74,7 @@ impl ImageKind {
             ImageKind::VendorBoot => &["vendor_boot"],
             ImageKind::Dtbo => &["dtbo"],
             ImageKind::Vbmeta => &["vbmeta", "vbmeta_system", "vbmeta_vendor"],
+            ImageKind::Super => &["super"],
         }
     }
 }
@@ -98,7 +105,17 @@ pub fn detect<R: Read + Seek>(file: &mut R, head: &[u8]) -> Result<Option<ImageK
     if head.starts_with(VBMETA_MAGIC) {
         return Ok(Some(ImageKind::Vbmeta));
     }
-    Ok(None)
+    if head.starts_with(SPARSE_MAGIC) {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(SUPER_AT)).context("seek to a super image's geometry")?;
+    let mut geometry = [0u8; 4];
+    match file.read_exact(&mut geometry) {
+        Ok(()) if geometry == SUPER_MAGIC => Ok(Some(ImageKind::Super)),
+        Ok(()) => Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(e) => Err(e).context("read a super image's geometry"),
+    }
 }
 
 /// Whether a packed ramdisk is a recovery's, by the names in its archive.
@@ -179,6 +196,11 @@ pub fn device(dir: &Path, name: &str, slot: Slot) -> PathBuf {
     dir.join(format!("{name}{}", slot.suffix()))
 }
 
+/// The super partition, which has no slot.
+pub fn super_device(dir: &Path) -> PathBuf {
+    dir.join("super")
+}
+
 /// The other partitions an image of any kind may be written to, after the
 /// ones its kind fits: a boot image can be put in any of them, though some
 /// may not suit it.
@@ -188,6 +210,10 @@ const ALSO: [&str; 8] = ["boot", "init_boot", "vendor_boot", "recovery", "dtbo",
 /// links in `dir`, the likeliest first, then the other partitions an image
 /// may be written to.
 pub fn partitions(kind: ImageKind, dir: &Path) -> Result<Vec<&'static str>> {
+    if kind == ImageKind::Super {
+        let path = super_device(dir);
+        return Ok(if path.try_exists().with_context(|| format!("look for {}", path.display()))? { vec!["super"] } else { vec![] });
+    }
     // A boot image may go to any of the boot family; a vbmeta or dtbo image
     // has its own partitions and is not offered the boot ones.
     let also: &[&str] = if matches!(kind, ImageKind::Boot { .. }) { &ALSO } else { &[] };
@@ -450,6 +476,20 @@ mod tests {
         assert_eq!(kind_of(&[0xd7, 0xb7, 0xab, 0x1e, 0, 0, 0, 0x40]).unwrap(), Some(ImageKind::Dtbo));
         assert_eq!(kind_of(b"AVB0\0\0\0\x01").unwrap(), Some(ImageKind::Vbmeta));
         assert_eq!(kind_of(b"\x3a\xff\x26\xed sparse").unwrap(), None);
+    }
+
+    #[test]
+    fn a_super_image_goes_to_the_one_partition_that_holds_both_slots() {
+        let mut image = vec![0u8; SUPER_AT as usize];
+        image.extend_from_slice(&SUPER_MAGIC);
+        image.resize((SUPER_AT + 4096) as usize, 0);
+        assert_eq!(kind_of(&image).unwrap(), Some(ImageKind::Super));
+        assert_eq!(ImageKind::Super.partitions(), ["super"]);
+        let dir = tempfile::tempdir().unwrap();
+        assert!(partitions(ImageKind::Super, dir.path()).unwrap().is_empty(), "no super partition");
+        std::fs::File::create(dir.path().join("super")).unwrap();
+        assert_eq!(partitions(ImageKind::Super, dir.path()).unwrap(), ["super"]);
+        assert_eq!(kind_of(&[0x3a, 0xff, 0x26, 0xed, 0, 0]).unwrap(), None, "a sparse image is not this");
     }
 
     #[test]

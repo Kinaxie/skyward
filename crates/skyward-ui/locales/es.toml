@@ -294,6 +294,7 @@ boot = "Imagen de arranque"
 vendor_boot = "Imagen de vendor_boot"
 dtbo = "Imagen de dtbo"
 vbmeta = "Imagen de vbmeta"
+super_image = "imagen super"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Contiene un kernel y un ramdisk de recovery"
@@ -304,6 +305,7 @@ generic_ramdisk = "Contiene solo un ramdisk genérico"
 vendor_ramdisk = "Contiene el ramdisk del fabricante y el árbol de dispositivos"
 overlays = "Contiene superposiciones del árbol de dispositivos"
 verified_boot_data = "Contiene datos de arranque verificado"
+all_partitions = "Contiene las particiones lógicas de ambas ranuras"
 
 [image.role]
 boot = "Kernel"
@@ -315,6 +317,7 @@ vbmeta = "Datos de arranque verificado"
 vbmeta_system = "Datos de verificación de las particiones del sistema"
 vbmeta_vendor = "Datos de verificación de las particiones del fabricante"
 partition = "Partición"
+super_partition = "Todas las particiones lógicas"
 
 [screen_off]
 never = "Nunca"

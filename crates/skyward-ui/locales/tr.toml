@@ -293,6 +293,7 @@ boot = "Önyükleme imajı"
 vendor_boot = "vendor_boot imajı"
 dtbo = "dtbo imajı"
 vbmeta = "vbmeta imajı"
+super_image = "super imajı"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Çekirdek ve kurtarma ramdisk'i içerir"
@@ -303,6 +304,7 @@ generic_ramdisk = "Yalnızca genel ramdisk içerir"
 vendor_ramdisk = "Üretici ramdisk'i ve cihaz ağacı içerir"
 overlays = "Cihaz ağacı katmanları içerir"
 verified_boot_data = "Doğrulanmış önyükleme verileri içerir"
+all_partitions = "İki yuvanın mantıksal bölümlerini içerir"
 
 [image.role]
 boot = "Çekirdek"
@@ -314,6 +316,7 @@ vbmeta = "Doğrulanmış önyükleme verileri"
 vbmeta_system = "Sistem bölümlerinin doğrulama verileri"
 vbmeta_vendor = "Üretici bölümlerinin doğrulama verileri"
 partition = "Bölüm"
+super_partition = "Tüm mantıksal bölümler"
 
 [screen_off]
 never = "Hiçbir zaman"

@@ -2870,8 +2870,13 @@ impl Pages<'_> {
                 }
             }
             Effect::Flash { partition, pick } => {
-                let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
-                self.installer.as_ref().context("no installer holds an image")?.flash(partition, pick.slots(slot));
+                let slots = if partition == "super" {
+                    Vec::new()
+                } else {
+                    let slot = skyward_vab::current_slot()?.context("not an A/B phone")?;
+                    pick.slots(slot)
+                };
+                self.installer.as_ref().context("no installer holds an image")?.flash(partition, slots);
             }
             Effect::Cancel => self.cancel_install(now)?,
             Effect::ReadMounts => self.app.set_mounts(self.mounts()),

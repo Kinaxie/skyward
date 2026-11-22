@@ -134,8 +134,12 @@ fn ended(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Installed { slot, .. } => format!("> installed to slot {}", slot.letter()),
         Outcome::Flashed { partition, slots } => {
-            let slots: Vec<&str> = slots.iter().map(|s| s.letter()).collect();
-            format!("> flashed {partition} to {}", slots.join(", "))
+            if slots.is_empty() {
+                format!("> flashed {partition}")
+            } else {
+                let slots: Vec<&str> = slots.iter().map(|s| s.letter()).collect();
+                format!("> flashed {partition} to {}", slots.join(", "))
+            }
         }
         Outcome::Ran { .. } => "> install script finished".to_string(),
         Outcome::SystemInstalled { name } => format!("> {name} installed"),
@@ -418,6 +422,16 @@ mod tests {
         app.key(Key::Back, 2000);
         assert_eq!(app.screen(), Screen::Install);
         assert_eq!(app.state.install, Install::Idle);
+    }
+
+    #[test]
+    fn a_super_image_asks_for_no_slot() {
+        let (f, i) = (fonts(), info());
+        let mut app = sideloading(&f, &i);
+        app.install(Event::Image { kind: ImageKind::Super, size: 1 << 30, partitions: vec!["super"] }, 0);
+        let hits = &app.frame(&f, &i).hits;
+        assert!(hits.iter().any(|h| h.action == Action::Confirm(Confirm::Flash)));
+        assert!(!hits.iter().any(|h| matches!(h.action, Action::FlashSlots(_))));
     }
 
     #[test]

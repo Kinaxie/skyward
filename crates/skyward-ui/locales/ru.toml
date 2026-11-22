@@ -295,6 +295,7 @@ boot = "Загрузочный образ"
 vendor_boot = "Образ vendor_boot"
 dtbo = "Образ dtbo"
 vbmeta = "Образ vbmeta"
+super_image = "образ super"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Содержит ядро и ramdisk рекавери"
@@ -305,6 +306,7 @@ generic_ramdisk = "Содержит только общий ramdisk"
 vendor_ramdisk = "Содержит ramdisk вендора и дерево устройств"
 overlays = "Содержит наложения дерева устройств"
 verified_boot_data = "Содержит данные проверенной загрузки"
+all_partitions = "Содержит логические разделы обоих слотов"
 
 [image.role]
 boot = "Ядро"
@@ -316,6 +318,7 @@ vbmeta = "Данные проверенной загрузки"
 vbmeta_system = "Данные проверки системных разделов"
 vbmeta_vendor = "Данные проверки разделов вендора"
 partition = "Раздел"
+super_partition = "Все логические разделы"
 
 [screen_off]
 never = "Никогда"

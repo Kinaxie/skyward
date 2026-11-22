@@ -293,6 +293,7 @@ boot = "Ảnh khởi động"
 vendor_boot = "Ảnh vendor_boot"
 dtbo = "Ảnh dtbo"
 vbmeta = "Ảnh vbmeta"
+super_image = "ảnh super"
 
 [image.holds]
 kernel_and_recovery_ramdisk = "Chứa kernel và ramdisk recovery"
@@ -303,6 +304,7 @@ generic_ramdisk = "Chỉ chứa ramdisk chung"
 vendor_ramdisk = "Chứa ramdisk nhà cung cấp và cây thiết bị"
 overlays = "Chứa các lớp phủ cây thiết bị"
 verified_boot_data = "Chứa dữ liệu xác minh khởi động"
+all_partitions = "Chứa các phân vùng logic của cả hai slot"
 
 [image.role]
 boot = "Kernel"
@@ -314,6 +316,7 @@ vbmeta = "Dữ liệu xác minh khởi động"
 vbmeta_system = "Dữ liệu xác minh của các phân vùng hệ thống"
 vbmeta_vendor = "Dữ liệu xác minh của các phân vùng nhà cung cấp"
 partition = "Phân vùng"
+super_partition = "Tất cả phân vùng logic"
 
 [screen_off]
 never = "Không bao giờ"

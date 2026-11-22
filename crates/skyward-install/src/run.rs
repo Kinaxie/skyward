@@ -824,11 +824,17 @@ fn lines(from: impl Read, mut each: impl FnMut(&str) -> io::Result<()>) -> io::R
     }
 }
 
-fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
+fn flash_image(ctx: &mut Context, kind: ImageKind, size: u64) -> Result<Done> {
     let dir = Path::new(skyward_block::BY_NAME);
     let partitions = image::partitions(kind, dir)?;
     if partitions.is_empty() {
         return Ok(Done::Decided(Outcome::Refused(Refusal::NoPartition)));
+    }
+    if kind == ImageKind::Super {
+        let state = skyward_vab::snapshot_state()?;
+        if state != SnapshotState::None {
+            return Ok(Done::Decided(Outcome::Refused(Refusal::Pending(state))));
+        }
     }
     ctx.send(Event::Image { kind, size, partitions: partitions.clone() });
     let (partition, slots) = match ctx.commands.recv() {
@@ -837,11 +843,16 @@ fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
         Ok(other) => bail!("an image waiting for its partition was told {other:?}"),
     };
     ensure!(partitions.contains(&partition), "{partition} is not among {partitions:?}");
-    ensure!(!slots.is_empty(), "no slot chosen for {partition}");
     if [skyward_systems::store::BOOT, skyward_systems::store::INIT_BOOT].contains(&partition) {
         installed_boot_set()?;
     }
-    let devices: Vec<_> = slots.iter().map(|&slot| image::device(dir, partition, slot)).collect();
+    let devices: Vec<_> = if kind == ImageKind::Super {
+        detach_once(ctx)?;
+        vec![image::super_device(dir)]
+    } else {
+        ensure!(!slots.is_empty(), "no slot chosen for {partition}");
+        slots.iter().map(|&slot| image::device(dir, partition, slot)).collect()
+    };
     let mut file = BufReader::with_capacity(1 << 20, File::open(fuse::PACKAGE).context("open the package")?);
     let mut told: Option<Instant> = None;
     image::flash(&mut file, size, &devices, &mut |done, total| {
@@ -850,6 +861,9 @@ fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
             told = Some(Instant::now());
         }
     })?;
+    if kind == ImageKind::Super {
+        let _ = kmsg("super: written, a reboot maps what it now holds");
+    }
     Ok(Done::Decided(Outcome::Flashed { partition, slots }))
 }
 
