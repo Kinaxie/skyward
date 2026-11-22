@@ -897,10 +897,6 @@ fn ready_apps() {
     }
 }
 
-/// What the decrypt page says when the key service turned a credential
-/// down: the two refusals a user can act on in their own words, and any
-/// other fault as the key service put it, for a log or a report.
-
 /// Whether the phone is shut, as its inner touch panel's driver reports it
 /// from the fold sensor it follows: "capfold_status: 1" open, "0" shut.
 fn shut_now() -> Option<bool> {
