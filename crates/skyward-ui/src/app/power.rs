@@ -458,10 +458,8 @@ mod tests {
         assert!(!app.display_on(), "then the panel goes dark again");
         assert!(app.panel(plugged + CHARGE_MS + 100).is_some(), "as the charging screen goes dark");
         app.tick(plugged + CHARGE_MS + 365);
-        assert_eq!(app.panel(plugged + CHARGE_MS + 365), Some(AOD_LIGHT), "the always-on screen then stands");
+        assert_eq!(app.panel(plugged + CHARGE_MS + 365), None, "the charging screen goes dark, not into the always-on screen");
         assert!(app.charging.is_none(), "and goes with it");
-        app.tick(plugged + CHARGE_MS + 365 + AOD_MS);
-        assert_eq!(app.panel(plugged + CHARGE_MS + 365 + AOD_MS), None);
     }
 
     #[test]

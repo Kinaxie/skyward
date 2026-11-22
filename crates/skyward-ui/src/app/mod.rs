@@ -1508,7 +1508,11 @@ impl App {
         if self.display_on && self.charging.as_ref().is_some_and(|c| c.shown.on && now >= c.since + CHARGE_MS) {
             let c = self.charging.as_mut().expect("the charging screen shows");
             if c.dark_after {
+                // The charging screen has already shown the clock, date and
+                // battery the always-on screen would; the panel goes dark
+                // rather than showing them again.
                 self.sleep(now);
+                self.aod = None;
             } else {
                 c.shown.set(false, now);
             }
