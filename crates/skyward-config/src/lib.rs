@@ -113,6 +113,10 @@ pub struct Wlan {
     /// what tells a platform driver it may start the chip.
     #[serde(default)]
     pub writes: Vec<Write>,
+    /// What is written when the WLAN is put away, such as the same switch
+    /// set back so the driver stops the chip.
+    #[serde(default)]
+    pub release: Vec<Write>,
     /// Files the driver asks the kernel's firmware loader for that are not
     /// where the loader looks in a recovery.
     #[serde(default)]
@@ -968,6 +972,7 @@ mod tests {
         let wlan = cfg.wlan.expect("the 13 Ultra's WLAN is described");
         assert_eq!(wlan.modules, ["qca_cld3_kiwi_v2"]);
         assert_eq!(wlan.writes, [Write { path: "/sys/kernel/cnss/fs_ready".into(), value: "1".into() }]);
+        assert_eq!(wlan.release, [Write { path: "/sys/kernel/cnss/fs_ready".into(), value: "0".into() }]);
         assert_eq!(wlan.firmware[0].partition, None);
         assert_eq!(wlan.firmware[1].partition.as_deref(), Some("persist"));
         assert_eq!(wlan.firmware[1].path, "kiwi_v2/wlan_mac.bin");
@@ -984,6 +989,7 @@ mod tests {
         let wlan = cfg.wlan.expect("the 17 Ultra's WLAN is described");
         assert_eq!(wlan.modules, ["rfkill", "qca_cld3_peach_v2"]);
         assert_eq!(wlan.writes, [Write { path: "/sys/kernel/cnss/fs_ready".into(), value: "1".into() }]);
+        assert_eq!(wlan.release, [Write { path: "/sys/kernel/cnss/fs_ready".into(), value: "0".into() }]);
         assert!(wlan.firmware.is_empty(), "the vendor's own links reach its settings and persist's MAC address");
         assert_eq!(wlan.libraries, ["/system/lib64", "/vendor/lib64"], "the recovery's own libraries come first");
         assert_eq!(wlan.probe, "http://connect.rom.miui.com/generate_204", "as the stock system asks it");

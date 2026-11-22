@@ -75,6 +75,7 @@ groups = ["system", "uhid", "input"]
 [wlan]
 modules = ["qca_cld3_qca6490"]
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+release = [{ path = "/sys/kernel/cnss/fs_ready", value = "0" }]
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
 # The Android 12 recovery lacks libbinder_ndk. The installed system

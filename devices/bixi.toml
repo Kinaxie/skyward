@@ -210,6 +210,7 @@ groups = ["root"]
 [wlan]
 modules = ["rfkill", "qca_cld3_peach_v2"]
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+release = [{ path = "/sys/kernel/cnss/fs_ready", value = "0" }]
 # cnss2 探针时向内核固件加载器要 wlan/qca_cld/peach_v2/WCNSS_qcom_cfg.ini，
 # 而它只存在于 /vendor/etc/wifi 下；不摆到 /etc/firmware 就会
 # "Failed to probe host driver, err = -1"，wlan0 永远不出现。

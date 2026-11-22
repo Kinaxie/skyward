@@ -48,6 +48,9 @@ const SOCKET_WAIT: Duration = Duration::from_secs(10);
 /// How long the supplicant gets to end once asked to.
 const END_WAIT: Duration = Duration::from_secs(3);
 
+/// How long the driver is given to stop the chip before it is unloaded.
+const PUT_AWAY_WAIT: Duration = Duration::from_millis(300);
+
 /// How often a network joined is read for its signal.
 const POLL: Duration = Duration::from_secs(5);
 
@@ -132,6 +135,13 @@ impl Worker {
             }
         }
         (wlan, traffic)
+    }
+}
+
+impl Worker {
+    /// Put the radio away and wait for the thread to end.
+    pub fn stop(self) {
+        self.inbox.tell(Inbox::End);
     }
 }
 
@@ -334,11 +344,15 @@ impl Station {
 
     fn off(&mut self) {
         self.unaddress();
+        let driving = self.running.is_some() || Path::new("/sys/class/net").join(&self.cfg.interface).exists();
         if let Some(mut r) = self.running.take() {
             end(&mut r.child, Some(&r.control));
         }
         if let Err(e) = iface::set_up(&self.cfg.interface, false) {
             let _ = skyward_sys::kmsg(&format!("{e:#}"));
+        }
+        if driving {
+            put_away(&self.cfg);
         }
         self.state = Wlan::default();
     }
@@ -641,6 +655,40 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
         }
     }
     iface::set_up(&cfg.interface, true)
+}
+
+
+/// Set the chip's switch back and unload its driver, so the system's own
+/// driver can start it cold after a restart.
+fn put_away(cfg: &Config) {
+    for w in &cfg.release {
+        if let Err(e) = fs::write(&w.path, &w.value) {
+            let _ = skyward_sys::kmsg(&format!("{} is not given {}: {e}", w.path, w.value));
+        }
+    }
+    if !cfg.release.is_empty() {
+        thread::sleep(PUT_AWAY_WAIT);
+    }
+    let mut why = None;
+    for attempt in 0..3 {
+        match skyward_modules::unload(&cfg.modules) {
+            Ok(gone) => {
+                if !gone.is_empty() {
+                    let _ = skyward_sys::kmsg(&format!("{} left the kernel", gone.join(", ")));
+                }
+                return;
+            }
+            Err(e) => {
+                why = Some(format!("{e:#}"));
+                if attempt < 2 {
+                    thread::sleep(PUT_AWAY_WAIT);
+                }
+            }
+        }
+    }
+    if let Some(why) = why {
+        let _ = skyward_sys::kmsg(&format!("the WLAN driver stays in the kernel: {why}"));
+    }
 }
 
 /// Put a file the driver asks for where the firmware loader looks.

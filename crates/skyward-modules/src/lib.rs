@@ -163,6 +163,37 @@ pub fn insmod(path: impl AsRef<Path>, params: &str) -> Result<()> {
     }
 }
 
+/// Take `names` out of the kernel, last loaded first. A module the kernel
+/// does not have is not an error.
+pub fn unload(names: &[String]) -> Result<Vec<String>> {
+    let mut gone = Vec::new();
+    for name in names.iter().rev() {
+        if removed(name)? {
+            gone.push(name.clone());
+        }
+    }
+    Ok(gone)
+}
+
+#[cfg(target_os = "android")]
+fn removed(name: &str) -> Result<bool> {
+    let cname = std::ffi::CString::new(name).map_err(|e| anyhow!("{name} is no module's name: {e}"))?;
+    let rc = unsafe { libc::syscall(libc::SYS_delete_module, cname.as_ptr(), libc::O_NONBLOCK as libc::c_int) };
+    if rc == 0 {
+        return Ok(true);
+    }
+    let e = std::io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::ENOENT) {
+        return Ok(false);
+    }
+    Err(anyhow!("{name} is still in the kernel: {e}"))
+}
+
+#[cfg(not(target_os = "android"))]
+fn removed(_name: &str) -> Result<bool> {
+    bail!("modules are loaded only on the phone")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

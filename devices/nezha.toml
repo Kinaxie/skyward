@@ -88,6 +88,7 @@ groups = ["root", "system", "wakelock", "graphics"]
 [wlan]
 modules = ["rfkill", "qca_cld3_peach_v2"]
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
+release = [{ path = "/sys/kernel/cnss/fs_ready", value = "0" }]
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
 libraries = ["/system/lib64", "/vendor/lib64"]

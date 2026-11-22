@@ -189,6 +189,13 @@ fn normal_max(max: u32, display: &str) -> Result<u32> {
 }
 
 /// Leave recovery for the chosen target.
+/// Put the WLAN away before the phone leaves the recovery.
+fn put_radio_away(wlan: &mut Option<wlan::Worker>) {
+    if let Some(worker) = wlan.take() {
+        worker.stop();
+    }
+}
+
 fn power(target: Target) -> Result<()> {
     skyward_sys::power(match target {
         Target::System => Power::System,
@@ -1690,6 +1697,7 @@ impl<'a> Pages<'a> {
         let now = monotonic_ms();
         if self.leave_at.is_some_and(|at| now >= at) {
             self.leave_at = None;
+            put_radio_away(&mut self.wlan);
             power(self.leave)?;
         }
         if !self.touch_known && self.started.elapsed() >= TOUCH_WAIT {
@@ -2259,6 +2267,7 @@ impl Pages<'_> {
                     if again {
                         bcb::write(&self.misc, &bcb::Bcb { command: "boot-rescue".into(), args: Vec::new() })?;
                     }
+                    put_radio_away(&mut self.wlan);
                     power(target)?;
                 }
             }
@@ -2492,6 +2501,7 @@ impl Pages<'_> {
                     }
                     self.switch_asked = false;
                     self.switched = true;
+                    put_radio_away(&mut self.wlan);
                     power(Target::System)?;
                 }
                 systems::Event::Failed(why) => {
@@ -2816,6 +2826,7 @@ impl Pages<'_> {
             // still kept in misc asked.
             Effect::Reboot(target) => {
                 self.done_with_request()?;
+                put_radio_away(&mut self.wlan);
                 power(target)?
             }
             Effect::Dismiss => self.done_with_request()?,
