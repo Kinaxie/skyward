@@ -99,9 +99,22 @@ jobs:
         run: |
           if [ -n "$DEVICE" ]; then
             test -f "devices/$DEVICE.toml"
+            if ! grep -q '^package = ' "devices/$DEVICE.toml"; then
+              echo "::error::devices/$DEVICE.toml names no stock package, so CI cannot build it"
+              exit 1
+            fi
             echo "devices=$(jq -nc --arg device "$DEVICE" '[$device]')" >> "$GITHUB_OUTPUT"
           else
-            echo "devices=$(basename -s .toml devices/*.toml | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+            devices=""
+            for f in devices/*.toml; do
+              device=$(basename -s .toml "$f")
+              if grep -q '^package = ' "$f"; then
+                devices="$devices$device\n"
+              else
+                echo "::notice::skipping $device: its configuration names no stock package"
+              fi
+            done
+            echo "devices=$(printf '%b' "$devices" | sed '/^$/d' | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
           fi
 
   recovery:
