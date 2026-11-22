@@ -641,6 +641,14 @@ impl App {
         self.snap = true;
     }
 
+    /// The shared storage's server started at `url`, or stopped.
+    pub fn set_file_serve_url(&mut self, url: Option<String>) {
+        if self.state.file_serve_url != url {
+            self.state.file_serve_url = url;
+            self.refresh();
+        }
+    }
+
     /// Show the user what the runtime has to say about work it was asked
     /// to do.
     pub fn report(&mut self, text: &str, now: u64) {

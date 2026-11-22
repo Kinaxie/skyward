@@ -1738,7 +1738,7 @@ impl<'a> Pages<'a> {
         self.merge_told(now)?;
         self.systems_told(now)?;
         self.wlan_told()?;
-        self.serve_files(now)?;
+        self.serve_files()?;
         self.keep_settings(now)?;
         self.updates_told(now)?;
         self.skyward_told(now)?;
@@ -1860,12 +1860,13 @@ impl<'a> Pages<'a> {
     /// joined and the storage is open, so a computer on the same network can
     /// take a package or an image without a cable. The server is let go when
     /// either goes.
-    fn serve_files(&mut self, now: u64) -> Result<()> {
+    fn serve_files(&mut self) -> Result<()> {
         let ready = self.app.state.file_serve
             && self.app.state.online()
             && self.app.state.place_open(Place::Storage);
         if !ready {
             self.serve = None;
+            self.app.set_file_serve_url(None);
             return Ok(());
         }
         let retry = self.serve_at.is_some_and(|at| at.elapsed() < Duration::from_secs(10));
@@ -1874,11 +1875,12 @@ impl<'a> Pages<'a> {
                 Ok(server) => {
                     let url = server.url();
                     skyward_sys::kmsg(&format!("the shared storage is served at {url}"))?;
-                    self.app.report(&format!("无线传输：{url}"), now);
+                    self.app.set_file_serve_url(Some(url));
                     self.serve = Some(server);
                     self.serve_at = None;
                 }
                 Err(e) => {
+                    self.app.set_file_serve_url(None);
                     skyward_sys::kmsg(&format!("the shared storage is not served: {e:#}"))?;
                     self.serve_at = Some(Instant::now());
                 }

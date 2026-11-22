@@ -378,6 +378,20 @@ pub fn settings(cx: &Ctx) -> Frame {
         ],
     ));
     y = widgets::section(&mut c, t, f, general.bottom, "USB");
+    let serve_note = if !s.file_serve {
+        None
+    } else if !s.data.storage_open() {
+        Some(l.pick(texts::decrypt::NEEDED))
+    } else if !s.online() {
+        Some(l.pick(texts::update::WLAN_FIRST))
+    } else {
+        s.file_serve_url.as_deref()
+    };
+    let serve = Row::new(l.pick(texts::local::WIRELESS_TRANSFER)).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve));
+    let serve = match serve_note {
+        Some(note) => serve.subtitle(note),
+        None => serve,
+    };
     let usb = widgets::list(
         &mut c,
         t,
@@ -385,13 +399,10 @@ pub fn settings(cx: &Ctx) -> Frame {
         y,
         &[
             Row::new(l.pick(texts::settings::FILE_TRANSFER)).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer)),
-            Row::new(l.pick(texts::local::WIRELESS_TRANSFER)).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve)),
+            serve,
         ],
     );
-    out.extend(hits(
-        &usb.rows,
-        &[Action::Toggle(Switch::FileTransfer), Action::Toggle(Switch::FileServe)],
-    ));
+    out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer), Action::Toggle(Switch::FileServe)]));
     y = widgets::footnote(&mut c, t, f, usb.bottom, l.pick(texts::settings::FILE_TRANSFER_NOTE));
     let note = l.pick(texts::local::WIRELESS_NOTE);
     y = widgets::footnote(&mut c, t, f, y, note);

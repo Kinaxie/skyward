@@ -44,6 +44,8 @@ pub struct State {
     pub file_transfer: bool,
     /// The owner's shared storage is served over the WLAN, read-only.
     pub file_serve: bool,
+    /// The address the shared storage is served at, once the server runs.
+    pub file_serve_url: Option<String>,
     /// An update applied from the install page is merged there and then,
     /// rather than left for the system to merge after its first start.
     pub merge_after: bool,
@@ -235,6 +237,7 @@ impl Default for State {
             vibration: SLIDER_START,
             file_transfer: true,
             file_serve: false,
+            file_serve_url: None,
             merge_after: true,
             reboot: 0,
             wipe: [false; WIPES.len()],
