@@ -291,6 +291,9 @@ pub struct Display {
     /// sliding over another rounds its leading corners to it.
     #[serde(default)]
     pub corner_radius: u32,
+    /// The phone has a second, cover panel, as a foldable's outer screen.
+    #[serde(default, alias = "covers")]
+    pub cover_display: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -665,12 +668,18 @@ mod tests {
             .filter(|p| p.extension().is_some_and(|e| e == "toml"))
             .collect();
         paths.sort();
+        let mut covers = Vec::new();
         for path in paths {
             let text = std::fs::read_to_string(&path).expect("read a device configuration");
-            if let Err(e) = DeviceConfig::parse(&text) {
-                panic!("{}: {e:#}", path.display());
+            let cfg = DeviceConfig::parse(&text).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+            if cfg.display.cover_display {
+                covers.push(cfg.device.codename);
             }
         }
+        for codename in ["bixi", "ruyi"] {
+            assert!(covers.iter().any(|c| c == codename), "{codename} is not marked with a cover display");
+        }
+        assert!(!covers.iter().any(|c| c == "dada"), "a phone without a cover display is marked with one");
     }
 
     #[test]

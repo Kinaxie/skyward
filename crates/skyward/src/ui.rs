@@ -1148,6 +1148,9 @@ fn job_end(end: filework::End) -> JobEnd {
 /// are the phone's own that the recovery keeps running: the
 /// configuration's, and those the phone's partitions name for its keys.
 pub fn run(cfg: &DeviceConfig, programs: &[Service], font: &Path, mono: &Path, request: bcb::Request, start: Screen, dump: Option<&Path>) -> Result<()> {
+    if cfg.display.cover_display {
+        skyward_sys::kmsg("the phone has a cover display; this recovery drives the inner panel only")?;
+    }
     let mut pages = Pages::open(cfg, programs, font, mono, request, start, dump)?;
     pages.begin()?;
     // The phone sleeps while its screen is off and nothing needs it awake.
