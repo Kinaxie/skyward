@@ -48,19 +48,21 @@ impl App {
     /// A charger or a computer was attached, `cable_in`, or taken away: the
     /// dark panel lights, and a lit one stays at full brightness for the
     /// screen-off time from now, as on the phone's own system. A cable
-    /// going in brings up the charging screen, over the page or on the
-    /// panel lit for it, which then goes dark again.
+    /// going in on a dark panel brings up the charging screen, which then
+    /// goes dark again; on a lit one the page stays as it is.
     pub fn plugged(&mut self, now: u64, cable_in: bool) {
-        if cable_in {
-            let dark = !self.display_on;
+        if cable_in && !self.display_on {
             let mut shown = self.charging.take().map_or(Fade::hidden(CHARGE_SHOW, CHARGE_HIDE), |c| c.shown);
-            if dark {
-                shown.jump(true);
-            } else {
-                shown.set(true, now);
-            }
-            self.charging = Some(Charging { since: now, shown, dark_after: dark });
+            shown.jump(true);
+            self.charging = Some(Charging { since: now, shown, dark_after: true });
             self.dirty = true;
+            self.wake(now);
+            return;
+        }
+        if cable_in {
+            // The status bar's battery sign says the cable came in; a page
+            // the user is looking at is not covered by the always-on art.
+            self.end_charging();
         }
         if self.display_on {
             self.stir(now);
@@ -463,16 +465,15 @@ mod tests {
     }
 
     #[test]
-    fn a_cable_going_in_on_a_lit_panel_brings_the_charging_screen_over_the_page_and_away() {
+    fn a_cable_going_in_on_a_lit_panel_leaves_the_page_lit() {
         let mut app = App::new(Screen::Home, W, H, PPD);
         app.tick(0);
         app.plugged(1000, true);
-        assert!(app.display_on() && app.charge_shown());
-        app.tick(1000 + CHARGE_MS);
-        assert!(app.display_on(), "the panel stays lit");
-        assert!(!app.charge_shown(), "as the charging screen goes for the page");
-        app.tick(1000 + CHARGE_MS + 300);
+        assert!(app.display_on(), "the page stays lit");
+        assert!(!app.charge_shown(), "no always-on art covers it");
         assert!(app.charging.is_none());
+        app.tick(1000 + CHARGE_MS);
+        assert!(app.display_on(), "and it is still lit when the screen-off time comes");
     }
 
     #[test]
