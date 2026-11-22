@@ -3019,6 +3019,9 @@ pub fn file_info(cx: &Ctx) -> Frame {
         rows.push(Row::new(l.pick(if image { texts::files::FLASH } else { texts::page::INSTALL })));
         acts.push(Action::InstallEntry);
     }
+    // The list opens the text and code it knows by extension itself; a
+    // file it left here may still be text, so the editor is offered for
+    // every plain file and turns down what is not UTF-8.
     if e.kind == FileKind::File {
         rows.push(Row::new(l.pick(texts::files::EDIT)));
         acts.push(Action::EditEntry);

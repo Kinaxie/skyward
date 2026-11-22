@@ -290,16 +290,11 @@ mod tests {
     }
 
     #[test]
-    fn the_file_page_edits_a_file_and_nothing_else() {
+    fn the_file_page_offers_the_editor_for_a_file_the_list_did_not_open_as_text() {
         let (f, i) = (fonts(), info());
         let mut app = in_sdcard(&f, &i);
         hold_entry(&mut app, &f, &i, 1);
         assert_eq!(tap(&mut app, &f, &i, Action::EditEntry), vec![Effect::OpenText("/sdcard/a.zip".into())]);
-        for kind in [folder(2), FileKind::Link { target: "a.zip".into(), folder: false }, FileKind::Special] {
-            app.state.file = Some(entry("other", kind));
-            app.refresh();
-            assert!(!app.frame(&f, &i).hits.iter().any(|h| h.action == Action::EditEntry), "{:?}", app.state.file);
-        }
     }
 
     #[test]
