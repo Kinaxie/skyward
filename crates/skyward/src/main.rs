@@ -14,6 +14,8 @@ mod decrypt;
 #[cfg(target_os = "android")]
 mod filework;
 #[cfg(target_os = "android")]
+mod fileserve;
+#[cfg(target_os = "android")]
 mod haptics;
 #[cfg(target_os = "android")]
 mod input;
@@ -37,6 +39,8 @@ mod services;
 mod settings;
 #[cfg(target_os = "android")]
 mod systems;
+#[cfg(target_os = "android")]
+mod touch;
 #[cfg(target_os = "android")]
 mod ui;
 #[cfg(target_os = "android")]
@@ -224,6 +228,22 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
+    let result = start();
+    // The screen is what a person sees, and it may not come up at all: the
+    // reason the recovery stopped goes to the kernel log, which the phone
+    // keeps in pstore past a restart, so it can still be read afterwards.
+    #[cfg(target_os = "android")]
+    if let Err(e) = &result
+        && let Err(told) = skyward_sys::kmsg(&format!("skyward stopped: {e:#}"))
+    {
+        eprintln!("skyward stopped: {e:#}; the kernel log was not written: {told}");
+    }
+    result
+}
+
+/// What the binary does, whether init started it as the recovery service by
+/// its path or as one of the commands it carries.
+fn start() -> Result<()> {
     // init starts the recovery service by path with no arguments.
     let started_as = std::env::args_os().next().unwrap_or_default();
     let name = Path::new(&started_as).file_name().unwrap_or_default();
@@ -761,6 +781,26 @@ fn recovery() -> Result<()> {
             skyward_sys::usb::set("none", std::time::Duration::from_secs(5))?;
         }
         skyward_sys::set_prop("sys.usb.config", "adb")?;
+        // The stock recovery's init starts adbd from the port's property;
+        // asking for it as root here, and waiting for its function, brings
+        // adb up before the pages, so a failure can be read from the
+        // computer.
+        skyward_sys::set_prop("service.adb.root", "1")?;
+        if !matches!(skyward_sys::prop("init.svc.adbd").as_deref(), Some("running")) {
+            skyward_sys::set_prop("ctl.start", "adbd")?;
+        }
+        let waited = std::time::Instant::now();
+        while skyward_sys::prop("sys.usb.ffs.ready").as_deref() != Some("1") && waited.elapsed() < std::time::Duration::from_secs(3) {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        skyward_sys::kmsg(&format!(
+            "usb: config ab, state {:?}, adbd {:?}, ffs {:?}, configfs {:?}, controller {:?}",
+            skyward_sys::prop("sys.usb.state"),
+            skyward_sys::prop("init.svc.adbd"),
+            skyward_sys::prop("sys.usb.ffs.ready"),
+            skyward_sys::prop("sys.usb.configfs"),
+            skyward_sys::prop("sys.usb.controller")
+        ))?;
         let misc = bcb::misc();
         let message = bcb::read(&misc)?;
         let request = message.request();

@@ -16,6 +16,8 @@ pub enum Switch {
     Vibrate,
     /// Offer internal storage to a computer over USB.
     FileTransfer,
+    /// Serve the owner's shared storage over the WLAN, read-only.
+    FileServe,
     /// Compress a backup.
     Compress,
     /// Read a backup back once it is written.
@@ -29,6 +31,14 @@ pub enum Switch {
     Wlan,
     /// Show the password typed rather than a dot for each character.
     ShowPassword,
+    /// A touch on the dark panel brings up the always-on screen.
+    AodTap,
+    /// Two touches in quick succession light the panel.
+    WakeTap,
+    /// Write dm-verity on the AVB page.
+    AvbVerity,
+    /// Write the bootloader's verification on the AVB page.
+    AvbVerification,
 }
 
 /// How long the screen stays on with nothing touched, in milliseconds, in

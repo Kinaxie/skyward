@@ -23,12 +23,27 @@ pub struct State {
     pub hour12: bool,
     /// The date the charging screen shows, by its place in [`AOD_DATES`].
     pub aod_date: usize,
+    /// A touch on the dark panel brings up the always-on screen.
+    pub aod_tap: bool,
+    /// Two touches in quick succession light the panel: from the always-on
+    /// screen, or from dark where the first brings it up.
+    pub wake_tap: bool,
+    /// How the file manager orders the entries of a folder.
+    pub sort: SortKey,
+    /// What the slot's vbmeta says, once read.
+    pub avb: Option<Result<AvbStatus, String>>,
+    pub avb_verity: bool,
+    pub avb_verification: bool,
+    /// How the last write went, or why it did not happen.
+    pub avb_notice: Option<String>,
     pub vibrate: bool,
     /// How strongly the motor taps, from 0 at the slider's left end to 1
     /// at its right.
     pub vibration: f32,
     /// A computer connected over USB is offered internal storage.
     pub file_transfer: bool,
+    /// The owner's shared storage is served over the WLAN, read-only.
+    pub file_serve: bool,
     pub reboot: usize,
     /// What the wipe page has chosen, by place in [`WIPES`].
     pub wipe: [bool; WIPES.len()],
@@ -206,9 +221,17 @@ impl Default for State {
             time_zone: 0,
             hour12: false,
             aod_date: 0,
+            aod_tap: true,
+            wake_tap: true,
+            sort: SortKey::AsListed,
+            avb: None,
+            avb_verity: true,
+            avb_verification: true,
+            avb_notice: None,
             vibrate: true,
             vibration: SLIDER_START,
             file_transfer: true,
+            file_serve: false,
             reboot: 0,
             wipe: [false; WIPES.len()],
             cache_partition: false,

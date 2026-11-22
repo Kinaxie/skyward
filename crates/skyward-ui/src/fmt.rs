@@ -1,6 +1,6 @@
 use crate::app::{
-    BackupRefusal, Data, EraseStop, FileKind, FileRow, ItemEnd, MountFailure, Part, PartKind, PartStop, Place, Source, TermEnd, BACKUP_PARTS,
-    TIME_ZONES,
+    BackupRefusal, Data, EraseStop, FileKind, FileRow, ItemEnd, MountFailure, Part, PartKind, PartStop, Place, SortKey, Source, TermEnd,
+    BACKUP_PARTS, TIME_ZONES,
 };
 use crate::lang::{Lang, Text};
 use crate::texts;
@@ -1173,6 +1173,16 @@ pub fn hour12_name(l: Lang, on: bool) -> &'static str {
     match on {
         true => l.among("12 小时制", "12 小時制", "12-hour"),
         false => l.among("24 小时制", "24 小時制", "24-hour"),
+    }
+}
+
+/// What the file sort page calls the order `key` puts the files in.
+pub fn sort_name(l: Lang, key: SortKey) -> &'static str {
+    match key {
+        SortKey::AsListed => l.among("默认顺序", "預設順序", "As listed"),
+        SortKey::Name => l.among("名称", "名稱", "Name"),
+        SortKey::Size => l.among("大小", "大小", "Size"),
+        SortKey::Modified => l.among("修改时间", "修改時間", "Modified"),
     }
 }
 

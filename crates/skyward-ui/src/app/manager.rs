@@ -114,6 +114,48 @@ pub enum FileKind {
     Special,
 }
 
+/// How the file manager orders the entries of a folder: folders first, then
+/// the files by what this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortKey {
+    /// The order the runtime listed them in, with folders first.
+    #[default]
+    AsListed,
+    Name,
+    Size,
+    Modified,
+}
+
+pub const SORT_KEYS: [SortKey; 4] = [SortKey::AsListed, SortKey::Name, SortKey::Size, SortKey::Modified];
+
+/// Whether `row` is a folder, or a link that points to one.
+fn is_folder(row: &FileRow) -> bool {
+    matches!(&row.kind, FileKind::Folder { .. } | FileKind::Link { folder: true, .. })
+}
+
+/// Put `rows` in the order the file manager shows them: folders first, by
+/// name, then the files by `key`; names break every tie.
+pub fn sort_rows(rows: &mut [FileRow], key: SortKey) {
+    if key == SortKey::AsListed {
+        return;
+    }
+    rows.sort_by(|a, b| {
+        let (a_folder, b_folder) = (is_folder(a), is_folder(b));
+        if a_folder != b_folder {
+            return b_folder.cmp(&a_folder);
+        }
+        let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+        if a_folder {
+            return by_name();
+        }
+        match key {
+            SortKey::AsListed | SortKey::Name => by_name(),
+            SortKey::Size => b.size.cmp(&a.size).then_with(by_name),
+            SortKey::Modified => b.modified.cmp(&a.modified).then_with(by_name),
+        }
+    });
+}
+
 /// A folder as a list of its entries shows it: where it is, what is in it
 /// as the runtime read it or why it could not, and when it was read, in
 /// Unix seconds: dates in the list are told against that day.
@@ -339,6 +381,10 @@ impl App {
     /// gone back up to shows where it was left, as the stock file manager
     /// does; any other starts from its top.
     fn show_folder(&mut self, screen: Screen, folder: String, files: Result<Vec<FileRow>, String>, listed: i64) {
+        let files = files.map(|mut entries| {
+            sort_rows(&mut entries, self.state.sort);
+            entries
+        });
         let left = &self.state.folder(screen).path;
         if folder != *left && self.screen() == screen {
             // Climbing out of a folder, the keys come back to it; any other

@@ -145,6 +145,11 @@ pub enum Screen {
     TimeFormat,
     /// The date the charging screen shows.
     AodDate,
+    /// How the file manager orders the entries of a folder.
+    FileSort,
+    /// The vbmeta flags of the slot: dm-verity and the bootloader's
+    /// verification.
+    Avb,
     /// What flashing and decrypting have said, and what this phone is.
     Output,
     /// Saving the logs, as a bug report asks for them.
@@ -221,6 +226,8 @@ pub enum Confirm {
     RunScript,
     /// Merge the update that waits in the slot the phone runs from.
     Merge,
+    /// Write the vbmeta flags the AVB page shows.
+    Avb,
     /// Give the data partition's files the SELinux labels the installed
     /// system's rules give them.
     Relabel,
@@ -281,6 +288,9 @@ pub enum Action {
     Hour12(bool),
     /// Show this date on the charging screen, by its place in [`AOD_DATES`].
     AodDate(usize),
+    /// Order the file manager's files this way, by its place in
+    /// [`SORT_KEYS`].
+    SortKey(usize),
     /// Speak this language.
     Language(Lang),
     /// Tick or untick a part of the backup, by its place in
@@ -410,6 +420,31 @@ pub enum Touch {
     Up,
 }
 
+/// A tap on the dark panel: where the finger came down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tap {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Tap {
+    /// A finger held longer than this is not a tap.
+    pub const MAX_MS: u64 = 180;
+    /// How long after a tap another may come and still be the second of a
+    /// double tap: Android's own window.
+    pub const WINDOW_MS: u64 = 300;
+    /// How far apart two taps of one double tap may land, as a share of the
+    /// screen's width: the slop the phone's own system uses.
+    pub const SLOP: f32 = 0.08;
+
+    /// Whether `other` lands near enough to be the second tap of one double
+    /// tap started by this, on a screen `w` pixels wide.
+    pub fn doubles(&self, other: &Tap, w: f32) -> bool {
+        let slop = Self::SLOP * w;
+        (other.x - self.x).abs() <= slop && (other.y - self.y).abs() <= slop
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Power,
@@ -420,12 +455,21 @@ pub enum Key {
 
 /// Where a screenshot went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shot {
-    /// Into the gallery's screenshots, in the owner's shared storage.
+pub enum Shot {    /// Into the gallery's screenshots, in the owner's shared storage.
     Album,
     /// Into the recovery's own memory, to go into the gallery's once the
     /// owner's storage opens.
     Held,
+}
+
+/// What the slot's vbmeta says of the checks the bootloader makes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AvbStatus {
+    pub partition: String,
+    pub verity: bool,
+    pub verification: bool,
+    /// The bootloader is unlocked, which writing the flags needs.
+    pub unlocked: bool,
 }
 
 /// Work the runtime carries out on the UI's behalf.
@@ -464,6 +508,11 @@ pub enum Effect {
     /// Read what the boot control holds of the slots, telling it with
     /// [`App::set_boot_slots`].
     ReadSlots,
+    /// Read the vbmeta flags of the slot, telling them with [`App::set_avb`].
+    ReadAvb,
+    /// Write the vbmeta flags of both slots, telling how it went with
+    /// [`App::avb_changed`].
+    SetAvb { verity: bool, verification: bool },
     /// Have the bootloader start this slot next, telling how it went with
     /// [`App::slot_switched`].
     SetSlot(Slot),
@@ -666,7 +715,10 @@ enum Press {
 const TOAST_MS: u64 = 2000;
 /// How long the always-on screen stays after a touch on the dark panel, and
 /// how brightly the panel is lit for it.
-const AOD_MS: u64 = 4000;
+const AOD_MS: u64 = 5000;
+/// How long the content takes to go dark before the always-on screen
+/// stands in its place.
+const AOD_DARKEN_MS: u64 = 365;
 const AOD_LIGHT: f32 = 0.05;
 /// How long a message takes to come in, and to go away, in milliseconds.
 const TOAST_IN_MS: u64 = 180;
@@ -1181,6 +1233,12 @@ pub struct App {
     /// The always-on screen a touch on the dark panel brought up, since
     /// when.
     aod: Option<u64>,
+    /// A finger on the dark panel, where it came down and when, while it
+    /// may still become a tap.
+    dark_touch: Option<(Tap, u64)>,
+    /// The last tap completed on the dark panel or the always-on screen,
+    /// for the double tap that lights the panel.
+    last_tap: Option<(Tap, u64)>,
     /// The charging screen, from when a cable goes in until it has gone,
     /// with the level and what the charger does drawn for it, and the
     /// screen it is drawn on while it comes or goes over the page.
@@ -1275,6 +1333,8 @@ impl App {
             darkening: None,
             keys_slide: None,
             aod: None,
+            dark_touch: None,
+            last_tap: None,
             charging: None,
             charge_art: None,
             charge_canvas: None,
@@ -1387,7 +1447,7 @@ impl App {
         };
         let blink = self.blink_at(now).filter(|_| self.display_on).map(|(_, next)| next);
         let chord = self.chord.map(|(_, at)| at + CHORD_MS);
-        [self.toast.as_ref().map(|t| t.2), self.aod.map(|s| s + AOD_MS), easing, self.idle_due(), held, repeat, blink, darkens, chord].into_iter().flatten().min()
+        [self.toast.as_ref().map(|t| t.2), self.aod.map(|at| at + AOD_MS), easing, self.idle_due(), held, repeat, blink, darkens, chord].into_iter().flatten().min()
     }
 
     /// Whether a text field's cursor shows at `now`, and when it next turns;
@@ -1515,8 +1575,9 @@ impl App {
                 self.bounce = None;
             }
         }
-        if self.aod.is_some_and(|since| now >= since + AOD_MS) {
+        if self.aod.is_some_and(|at| now >= at + AOD_MS) {
             self.aod = None;
+            self.last_tap = None;
             self.dirty = true;
         }
         if let Some(spring) = self.keys_slide {

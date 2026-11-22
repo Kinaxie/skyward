@@ -5,15 +5,30 @@ use super::*;
 
 impl App {
     pub fn touch(&mut self, ev: Touch, f: &Fonts, now: u64) -> Vec<Effect> {
-        // A finger on the dark panel brings up the always-on screen; a
-        // second one lights the panel itself, as on the phone's own system.
+        // A finger on the dark panel brings up the always-on screen; two
+        // taps close together in space and time light the panel itself, as
+        // on the phone's own system. Either can be turned off in the
+        // settings.
         if !self.display_on {
-            if matches!(ev, Touch::Down(..)) {
-                match self.aod {
-                    Some(_) => self.wake(now),
-                    None => {
-                        self.aod = Some(now);
-                        self.dirty = true;
+            match ev {
+                Touch::Down(x, y) => self.dark_touch = Some((Tap { x, y }, now)),
+                Touch::Move(x, y) => {
+                    let moved = self.dark_touch.is_some_and(|(start, at)| {
+                        let slop = Tap::SLOP * self.w as f32;
+                        now.saturating_sub(at) > Tap::MAX_MS || (x - start.x).abs() > slop || (y - start.y).abs() > slop
+                    });
+                    if moved {
+                        self.dark_touch = None;
+                        self.last_tap = None;
+                    }
+                }
+                Touch::Up => {
+                    if let Some((tap, at)) = self.dark_touch.take() {
+                        if now.saturating_sub(at) <= Tap::MAX_MS {
+                            self.dark_tap(now, tap.x, tap.y);
+                        } else {
+                            self.last_tap = None;
+                        }
                     }
                 }
             }
@@ -115,6 +130,11 @@ impl App {
                         .map(|h| (h.action, h.rect))
                 };
                 let action = hit.map(|h| h.0);
+                // A control that itself sits against the edge is pressed, not
+                // swiped from: the on-screen keyboard's leftmost key starts a
+                // few dp in, and a finger on it that drifts sideways was being
+                // turned into a swipe back and lost.
+                let at_edge = at_edge.filter(|_| hit.is_none_or(|(_, r)| r.x > m.dp(4.0)));
                 // A tap of the motor under each key of the on-screen
                 // keyboard or keypad, as the stock ones give.
                 if self.state.vibrate && matches!(action, Some(Action::Type(_))) {
@@ -334,6 +354,42 @@ impl App {
             self.row_press = Some(RowPress { fall: Some(now), ..p });
         }
         self.dirty = true;
+    }
+
+    /// A completed tap on the dark panel or the always-on screen: the second
+    /// of two taps that land near each other, soon enough, lights the panel,
+    /// as the phone's own double tap does. The first brings up the always-on
+    /// screen, where that is wanted, and starts the count.
+    fn dark_tap(&mut self, now: u64, x: f32, y: f32) {
+        let tap = Tap { x, y };
+        let doubled =
+            self.last_tap.filter(|(first, at)| now.saturating_sub(*at) <= Tap::WINDOW_MS && first.doubles(&tap, self.w as f32));
+        match doubled {
+            Some(_) => {
+                self.last_tap = None;
+                if self.state.wake_tap {
+                    self.wake(now);
+                }
+            }
+            None => {
+                self.last_tap = Some((tap, now));
+                if self.aod.is_none() && self.state.aod_tap {
+                    self.aod = Some(now);
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    /// The touch controller reported its own double tap: it lights a dark
+    /// panel when the setting allows, and never acts like the power key on
+    /// a panel already lit.
+    pub fn gesture_wake(&mut self, now: u64) -> Vec<Effect> {
+        if self.state.wake_tap && !self.display_on {
+            self.wake(now);
+            self.drag = Drag::Waking;
+        }
+        Vec::new()
     }
 
     /// No touchscreen answers: the keys work the pages, their light shown

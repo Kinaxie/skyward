@@ -40,6 +40,13 @@ paths = ["/dev/st54spi_gpio"]
 [touch]
 writes = [{ path = "/sys/class/touch/touch_dev/enable_touch_raw", value = "0" }]
 
+# The controller's own double tap reports KEY_WAKEUP through Xiaomi's
+# common-data interface, even while the controller stops sending
+# coordinates; the pages light on it when the setting allows.
+[touch.xiaomi_double_tap]
+path = "/dev/xiaomi-touch"
+touch_id = 0
+
 # What the phone's own init runs once the system has finished starting, as
 # kernel-post-boot in /vendor/etc/init/hw/init.qti.kernel.rc. The kernel
 # starts the CPU clusters on the performance governor, which holds them at

@@ -2,7 +2,8 @@ use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
     FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, Pick, Place, Rows, Screen,
     SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe, ADDABLE,
-    AOD_DATES, BACKUP_PARTS, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, WIPES, installs, starting,
+    AOD_DATES, BACKUP_PARTS, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, SORT_KEYS, TARGETS, TIME_ZONES, WIPES, installs,
+    starting,
 };
 use crate::canvas::Canvas;
 use crate::color::Rgba;
@@ -92,6 +93,8 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::TimeZone => time_zone(cx),
         Screen::TimeFormat => time_format(cx),
         Screen::AodDate => aod_date_page(cx),
+        Screen::FileSort => file_sort_page(cx),
+        Screen::Avb => avb_page(cx),
         Screen::Output => output(cx),
         Screen::Logs => logs(cx),
         Screen::Update => update(cx),
@@ -136,6 +139,7 @@ pub fn confirm_label(which: Confirm, s: &State) -> (&'static str, bool) {
         Confirm::RunScript => (confirm::INSTALL, true),
         Confirm::Merge => (confirm::MERGE, true),
         Confirm::Relabel => (confirm::FIX, true),
+        Confirm::Avb => (crate::lang::same("Write AVB"), true),
         Confirm::SwitchSystem => (confirm::SWITCH_AND_REBOOT, false),
         Confirm::RemoveSystem => (confirm::REMOVE, true),
         Confirm::InstallSystem => (confirm::INSTALL, false),
@@ -357,18 +361,57 @@ pub fn settings(cx: &Ctx) -> Frame {
         Row::new(l.pick(texts::page::TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
         Row::new(l.among("时间格式", "時間格式", "Time format")).icon(BLUE, Icon::Clock).trail(Trail::Value(fmt::hour12_name(l, s.hour12))),
         Row::new(l.among("息屏日期", "息屏日期", "Always-on date")).icon(SLATE, Icon::Clock).trail(Trail::Value(fmt::aod_date_name(l, s.aod_date))),
+        Row::new(l.among("文件排序", "檔案排序", "File sorting")).icon(SLATE, Icon::Folder).trail(Trail::Value(fmt::sort_name(l, s.sort))),
+        Row::new(l.among("单击亮息屏", "輕觸亮息屏", "Single tap for always-on")).icon(SLATE, Icon::Lock).trail(Trail::Switch(s.aod_tap)),
+        Row::new(l.among("双击亮屏", "雙擊亮屏", "Double tap to wake")).icon(BLUE, Icon::Power).trail(Trail::Switch(s.wake_tap)),
     ]);
     out.extend(hits(
         &general.rows,
-        &[Action::Open(Screen::Language), Action::Open(Screen::TimeZone), Action::Open(Screen::TimeFormat), Action::Open(Screen::AodDate)],
+        &[
+            Action::Open(Screen::Language),
+            Action::Open(Screen::TimeZone),
+            Action::Open(Screen::TimeFormat),
+            Action::Open(Screen::AodDate),
+            Action::Open(Screen::FileSort),
+            Action::Toggle(Switch::AodTap),
+            Action::Toggle(Switch::WakeTap),
+        ],
     ));
     y = widgets::section(&mut c, t, f, general.bottom, "USB");
-    let usb = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(texts::settings::FILE_TRANSFER)).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer))]);
-    out.extend(hits(&usb.rows, &[Action::Toggle(Switch::FileTransfer)]));
+    let usb = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[
+            Row::new(l.pick(texts::settings::FILE_TRANSFER)).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer)),
+            Row::new(l.among("USB 设备", "USB 裝置", "USB drive")).icon(PURPLE, Icon::UsbDrive),
+            Row::new(l.among("无线传输", "無線傳輸", "Wireless transfer")).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve)),
+        ],
+    );
+    out.extend(hits(
+        &usb.rows,
+        &[Action::Toggle(Switch::FileTransfer), Action::Open(Screen::Choose(Place::UsbDrive)), Action::Toggle(Switch::FileServe)],
+    ));
     y = widgets::footnote(&mut c, t, f, usb.bottom, l.pick(texts::settings::FILE_TRANSFER_NOTE));
+    let note = l.among(
+        "无线传输先要连上 Wi-Fi 并完成解密；开启后地址会以通知显示，电脑在同一网络用浏览器打开即可。",
+        "無線傳輸先要連上 Wi-Fi 並完成解密；開啟後位址會以通知顯示，電腦在同一網路用瀏覽器開啟即可。",
+        "Wireless transfer needs Wi-Fi and an open storage; the address shows as a notification, and a computer on the same network opens it in a browser.",
+    );
+    y = widgets::footnote(&mut c, t, f, y, note);
     y = widgets::section(&mut c, t, f, y, l.pick(texts::settings::DEBUGGING));
-    let debug = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(texts::page::TERMINAL)).icon(SLATE, Icon::Terminal)]);
-    out.extend(hits(&debug.rows, &[Action::Open(Screen::Terminal)]));
+    let debug = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[
+            Row::new(l.pick(texts::page::TERMINAL)).icon(SLATE, Icon::Terminal),
+            Row::new(l.among("AVB 校验", "AVB 校驗", "AVB checks")).icon(SLATE, Icon::Shield),
+        ],
+    );
+    out.extend(hits(&debug.rows, &[Action::Open(Screen::Terminal), Action::Open(Screen::Avb)]));
     y = widgets::section(&mut c, t, f, debug.bottom, l.pick(texts::settings::ABOUT));
     let mut rows = vec![Row::new(l.pick(texts::page::ABOUT)).trail(Trail::Value(VERSION))];
     let mut opens = vec![Action::Open(Screen::About)];
@@ -448,6 +491,70 @@ pub fn aod_date_page(cx: &Ctx) -> Frame {
     let y = widgets::footnote(&mut c, t, f, list.bottom, note);
     let picks: Vec<Action> = (0..AOD_DATES.len()).map(Action::AodDate).collect();
     Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.among("息屏日期", "息屏日期", "Always-on date"), top)
+}
+
+/// How the file manager orders the entries of a folder.
+pub fn file_sort_page(cx: &Ctx) -> Frame {    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = page(cx);
+    let top = t.m.content_top;
+    let rows: Vec<Row> = SORT_KEYS.iter().map(|&k| Row::new(fmt::sort_name(l, k)).trail(Trail::Check(s.sort == k))).collect();
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let note = l.among(
+        "文件夹始终排在前面；同一类里按这里的选择排序。",
+        "資料夾始終排在前面；同一類裡按這裡的選擇排序。",
+        "Folders stay first; within a kind, the choice here orders the list.",
+    );
+    let y = widgets::footnote(&mut c, t, f, list.bottom, note);
+    let picks: Vec<Action> = (0..SORT_KEYS.len()).map(Action::SortKey).collect();
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.among("文件排序", "檔案排序", "File sorting"), top)
+}
+
+/// The vbmeta flags of the slot: dm-verity, the bootloader's verification,
+/// and the swipe that writes them to both slots.
+pub fn avb_page(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = page(cx);
+    let top = t.m.content_top;
+    let mut out = Vec::new();
+    let status = match &s.avb {
+        None => l.among("正在读取 vbmeta…", "正在讀取 vbmeta…", "Reading vbmeta…").to_string(),
+        Some(Err(e)) => format!("{}：{e}", l.among("读取失败", "讀取失敗", "Could not read")),
+        Some(Ok(st)) => format!(
+            "{}  ·  {}  ·  verity {}  verification {}",
+            st.partition,
+            if st.unlocked { l.among("已解锁", "已解鎖", "unlocked") } else { l.among("已锁定", "已鎖定", "locked") },
+            if st.verity { "on" } else { "off" },
+            if st.verification { "on" } else { "off" }
+        ),
+    };
+    let facts = widgets::list(&mut c, t, f, top, &[Row::new(status.as_str())]);
+    let mut y = facts.bottom + t.m.dp(10.0);
+    let rows = [
+        Row::new("dm-verity").trail(Trail::Switch(s.avb_verity)),
+        Row::new(l.among("boot 校验", "boot 校驗", "Boot verification")).trail(Trail::Switch(s.avb_verification)),
+    ];
+    let switches = widgets::list(&mut c, t, f, y, &rows);
+    out.extend(hits(&switches.rows, &[Action::Toggle(Switch::AvbVerity), Action::Toggle(Switch::AvbVerification)]));
+    y = switches.bottom;
+    if let Some(Ok(st)) = &s.avb
+        && (s.avb_verity != st.verity || s.avb_verification != st.verification)
+    {
+        let (label, danger) = confirm_label(Confirm::Avb, s);
+        let track = widgets::confirm(&mut c, t, f, y + t.m.dp(28.0), label, danger, s.confirm);
+        out.push(Hit { rect: track, action: Action::Confirm(Confirm::Avb) });
+        y = track.y + track.h;
+    }
+    if let Some(said) = &s.avb_notice {
+        let note = widgets::footnote(&mut c, t, f, y, said);
+        y = note;
+    }
+    let note = l.among(
+        "只改 vbmeta 头里的标志位，需要已解锁的 bootloader；写入会同时作用到两个槽。",
+        "只改 vbmeta 頭裡的標誌位，需要已解鎖的 bootloader；寫入會同時作用到兩個槽。",
+        "Only the flags in the vbmeta header change; the bootloader must be unlocked. Both slots are written.",
+    );
+    let y = widgets::footnote(&mut c, t, f, y, note);
+    Frame::new(t, fit(c, t, y), out, l.among("AVB", "AVB", "AVB"), top)
 }
 
 /// What flashing and decrypting have said, this phone's own details, and

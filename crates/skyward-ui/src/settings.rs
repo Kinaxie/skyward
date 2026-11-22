@@ -48,11 +48,17 @@ pub struct Settings {
     pub hour12: bool,
     /// The date the charging screen shows, by its name in [`AOD_DATES`].
     pub aod_date: String,
+    /// A touch on the dark panel brings up the always-on screen.
+    pub aod_tap: bool,
+    /// Two touches in quick succession light the panel.
+    pub wake_tap: bool,
     pub vibrate: bool,
     /// The vibration slider's place, from 0 at its left end to 1.
     pub vibration: f32,
     /// A computer connected over USB is offered internal storage.
     pub file_transfer: bool,
+    /// The owner's shared storage is served over the WLAN, read-only.
+    pub file_serve: bool,
     pub install: Install,
     pub backup: Backup,
     pub logs: Logs,
@@ -129,9 +135,12 @@ impl Settings {
             time_zone: TIME_ZONES[state.time_zone].2.to_string(),
             hour12: state.hour12,
             aod_date: AOD_DATES[state.aod_date].to_string(),
+            aod_tap: state.aod_tap,
+            wake_tap: state.wake_tap,
             vibrate: state.vibrate,
             vibration: state.vibration,
             file_transfer: state.file_transfer,
+            file_serve: state.file_serve,
             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
             backup: Backup {
                 parts: names(&state.backup, &PARTS),
@@ -183,6 +192,8 @@ impl Settings {
         if let Some(k) = AOD_DATES.iter().position(|n| *n == self.aod_date) {
             state.aod_date = k;
         }
+        state.aod_tap = self.aod_tap;
+        state.wake_tap = self.wake_tap;
         if let Some(at) = SCREEN_OFF.iter().position(|off| off.map_or(0, |ms| ms / 1000) == self.screen_off) {
             state.screen_off = at;
         }
@@ -194,6 +205,7 @@ impl Settings {
             state.vibration = self.vibration;
         }
         state.file_transfer = self.file_transfer;
+        state.file_serve = self.file_serve;
         state.check_signature = self.install.check_signature;
         state.keep_recovery = self.install.keep_recovery;
         state.backup = picked(&self.backup.parts, &PARTS);

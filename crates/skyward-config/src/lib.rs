@@ -312,11 +312,46 @@ impl Default for Modules {
 /// something before a recovery can read touches from it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct Touch {
+    /// The touchscreen's input device, where the one to use is not the
+    /// first direct multitouch device under /dev/input: a userspace daemon
+    /// that remaps the panel's coordinates makes a virtual one.
+    #[serde(default)]
+    pub remapped_device: Option<String>,
     /// What is written once the touchscreen's input device has appeared,
     /// each value to its file: the driver makes that device as the last
     /// step of starting the controller.
     #[serde(default)]
     pub writes: Vec<Write>,
+    /// The Xiaomi touch driver's common-data ABI, whose double-tap mode
+    /// reports KEY_WAKEUP even while coordinates are stopped.
+    #[serde(default)]
+    pub xiaomi_double_tap: Option<XiaomiDoubleTap>,
+    /// The turn the panel is held at, for a touch device whose coordinates
+    /// are reported in the panel's own frame.
+    #[serde(default)]
+    pub transform: Transform,
+}
+
+/// The turn a touch panel's coordinates need to land on the page drawn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub enum Transform {
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "rotate_90_ccw")]
+    Rotate90Ccw,
+    #[serde(rename = "rotate_90_cw")]
+    Rotate90Cw,
+    #[serde(rename = "rotate_180")]
+    Rotate180,
+}
+
+/// The touch controller's common-data interface, which can be asked for a
+/// native double tap without keeping the controller reporting coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct XiaomiDoubleTap {
+    pub path: String,
+    pub touch_id: i8,
 }
 
 /// Partitions as the phone itself mounts them.
@@ -513,6 +548,15 @@ impl DeviceConfig {
             let name = &firmware.partition;
             ensure!(!name.is_empty() && !name.contains('/'), "[firmware] partition: {name} is not a partition's name");
         }
+        if let Some(gesture) = &cfg.touch.xiaomi_double_tap {
+            ensure!(
+                Path::new(&gesture.path).has_root() && gesture.touch_id >= 0,
+                "[touch.xiaomi_double_tap] needs an absolute path and a nonnegative touch_id"
+            );
+        }
+        if let Some(path) = &cfg.touch.remapped_device {
+            ensure!(Path::new(path).has_root(), "[touch] remapped_device: {path} is not an absolute path");
+        }
         for name in &cfg.partitions.mounted {
             ensure!(!name.is_empty() && !name.contains('/'), "[partitions] mounted: {name} is not a partition's name");
         }
@@ -607,6 +651,23 @@ impl DeviceConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_device_configuration_parses() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../devices");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .expect("the devices folder")
+            .map(|e| e.expect("a device configuration").path())
+            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let text = std::fs::read_to_string(&path).expect("read a device configuration");
+            if let Err(e) = DeviceConfig::parse(&text) {
+                panic!("{}: {e:#}", path.display());
+            }
+        }
+    }
 
     #[test]
     fn the_commands_sit_beside_the_recovery_service_binary() {

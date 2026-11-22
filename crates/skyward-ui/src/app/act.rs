@@ -3,11 +3,36 @@
 use super::*;
 
 impl App {
+    /// The runtime read the slot's vbmeta flags: the switches take them.
+    pub fn set_avb(&mut self, status: Result<AvbStatus, String>) {
+        if let Ok(status) = &status {
+            self.state.avb_verity = status.verity;
+            self.state.avb_verification = status.verification;
+        }
+        self.state.avb = Some(status);
+        self.refresh();
+    }
+
+    /// A write of the vbmeta flags ended: the page says how, and reads the
+    /// flags again where it went.
+    pub fn avb_changed(&mut self, result: Result<AvbStatus, String>, now: u64) {
+        match &result {
+            Ok(_) => self.state.avb_notice = Some(self.state.lang.among("已写入。", "已寫入。", "Written.").to_string()),
+            Err(why) => self.state.avb_notice = Some(why.clone()),
+        }
+        self.set_avb(result);
+        self.wake(now);
+    }
+
     /// Carry out a tapped control.
     pub(super) fn act(&mut self, action: Action, now: u64) -> Vec<Effect> {
         let l = self.state.lang;
         match action {
             Action::Open(s) => {
+                if s == Screen::Avb {
+                    self.state.avb = None;
+                    self.state.avb_notice = None;
+                }
                 if s == Screen::Search && self.screen() == Screen::Home {
                     // The bar moves up from where it stands unfolded: a
                     // page easing there for the keys gets there at once.
@@ -19,7 +44,11 @@ impl App {
                 } else {
                     self.open(s);
                 }
-                return self.arrive_at(s);
+                let mut fx = self.arrive_at(s);
+                if s == Screen::Avb {
+                    fx.push(Effect::ReadAvb);
+                }
+                return fx;
             }
             Action::OpenData => return self.open_data(),
             Action::Skip => {
@@ -52,15 +81,24 @@ impl App {
                 let on = match switch {
                     Switch::Vibrate => &mut self.state.vibrate,
                     Switch::FileTransfer => &mut self.state.file_transfer,
+                    Switch::FileServe => &mut self.state.file_serve,
                     Switch::Compress => &mut self.state.compress,
                     Switch::Verify => &mut self.state.verify,
                     Switch::Signature => &mut self.state.check_signature,
                     Switch::KeepRecovery => &mut self.state.keep_recovery,
                     Switch::ShowPassword => &mut self.state.show_password,
+                    Switch::AodTap => &mut self.state.aod_tap,
+                    Switch::WakeTap => &mut self.state.wake_tap,
+                    Switch::AvbVerity => &mut self.state.avb_verity,
+                    Switch::AvbVerification => &mut self.state.avb_verification,
                     Switch::Wlan => unreachable!("the WLAN switch is turned above"),
                 };
                 *on = !*on;
                 let now_on = *on;
+                if matches!(switch, Switch::AodTap | Switch::WakeTap) {
+                    self.dark_touch = None;
+                    self.last_tap = None;
+                }
                 self.refresh();
                 if switch == Switch::FileTransfer {
                     return vec![Effect::FileTransfer(now_on)];
@@ -248,6 +286,19 @@ impl App {
             Action::AodDate(k) => {
                 if k < AOD_DATES.len() && self.state.aod_date != k {
                     self.state.aod_date = k;
+                    self.refresh();
+                }
+            }
+            Action::SortKey(k) => {
+                if let Some(key) = SORT_KEYS.get(k).copied()
+                    && self.state.sort != key
+                {
+                    self.state.sort = key;
+                    for screen in [Screen::Files, Screen::Choose(Place::Storage), Screen::Choose(Place::UsbDrive)] {
+                        if let Ok(entries) = &mut self.state.folder_mut(screen).entries {
+                            sort_rows(entries, key);
+                        }
+                    }
                     self.refresh();
                 }
             }
@@ -775,6 +826,19 @@ impl App {
                 _ => self.say(l.pick(texts::slot::UNREADABLE), now),
             },
             Confirm::FactoryReset => fx.push(Effect::FactoryReset),
+            Confirm::Avb => {
+                let unlocked = self.state.avb.as_ref().is_some_and(|s| s.as_ref().is_ok_and(|s| s.unlocked));
+                if unlocked {
+                    fx.push(Effect::SetAvb { verity: self.state.avb_verity, verification: self.state.avb_verification });
+                } else {
+                    let why = self
+                        .state
+                        .lang
+                        .among("bootloader 未解锁，不能写 vbmeta。", "bootloader 未解鎖，不能寫 vbmeta。", "The bootloader is locked; vbmeta is not written.");
+                    self.state.avb_notice = Some(why.to_string());
+                    self.refresh();
+                }
+            }
             Confirm::Merge => {
                 if self.state.update == Standing::Waiting {
                     self.state.update = Standing::Merging(0.0);

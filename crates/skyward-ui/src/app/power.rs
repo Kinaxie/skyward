@@ -13,7 +13,7 @@ impl App {
     /// is told to go off.
     pub fn panel(&self, now: u64) -> Option<f32> {
         if !self.display_on {
-            if self.aod.is_some_and(|since| now.saturating_sub(since) < AOD_MS) {
+            if self.aod.is_some_and(|at| now >= at && now.saturating_sub(at) < AOD_MS) {
                 return Some(AOD_LIGHT);
             }
             return self.darkening.filter(|_| self.curtain.level(now) > 0.0);
@@ -39,6 +39,8 @@ impl App {
             self.curtain.set(true, now);
         }
         self.aod = None;
+        self.dark_touch = None;
+        self.last_tap = None;
         self.woke_at = Some(now);
         self.stir(now);
     }
@@ -101,7 +103,11 @@ impl App {
         self.darkening = self.panel(now);
         self.curtain.set(false, now);
         self.display_on = false;
-        self.aod = None;
+        // Turning the panel off shows the always-on screen for a while
+        // once the content has gone dark, as the phone's own system does.
+        self.aod = Some(now + AOD_DARKEN_MS);
+        self.dark_touch = None;
+        self.last_tap = None;
         self.bright = full_brightness();
         match std::mem::replace(&mut self.drag, Drag::Idle) {
             Drag::Confirm { .. } => {
@@ -257,8 +263,11 @@ mod tests {
         assert!(!app.display_on());
         assert_eq!(app.panel(OFF), Some(dim_level(SLIDER_START)), "the content goes dark under the dim backlight");
         app.tick(OFF + 365);
-        assert_eq!(app.panel(OFF + 365), None);
-        assert_eq!(app.deadline(OFF + 365), None, "nothing to wait for on a dark panel");
+        assert_eq!(app.panel(OFF + 365), Some(AOD_LIGHT), "the always-on screen then stands");
+        assert_eq!(app.deadline(OFF + 365), Some(OFF + 365 + AOD_MS), "for a while");
+        app.tick(OFF + 365 + AOD_MS);
+        assert_eq!(app.panel(OFF + 365 + AOD_MS), None, "then the panel goes dark");
+        assert_eq!(app.deadline(OFF + 365 + AOD_MS), None);
     }
 
     #[test]
@@ -299,21 +308,114 @@ mod tests {
     }
 
     #[test]
-    fn a_touch_on_the_dark_panel_lights_nothing() {
+    fn a_touch_on_the_dark_panel_shows_the_always_on_screen_and_a_double_tap_lights_it() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
         let (x, y) = spot(&mut app, &f, &i, Action::Open(Screen::Settings));
         press(&mut app, Key::Power, 0);
-        assert!(app.touch(Touch::Down(x, y), &f, 100).is_empty());
-        assert!(app.touch(Touch::Move(x, y - 300.0), &f, 120).is_empty());
-        assert!(app.touch(Touch::Up, &f, 140).is_empty());
-        assert!(!app.display_on(), "the panel stays dark");
-        assert_eq!(app.screen(), Screen::Home, "the tap pressed nothing");
-        assert_eq!(app.top().1, 0.0, "nor scrolled the page");
-        press(&mut app, Key::Power, 200);
-        assert!(app.display_on());
-        tap_at(&mut app, &f, &i, Action::Open(Screen::Settings), 700);
-        assert_eq!(app.screen(), Screen::Settings, "a tap on the lit panel does");
+        assert_eq!(app.panel(100), Some(SLIDER_START), "the content goes dark under its light");
+        assert_eq!(app.panel(400), Some(AOD_LIGHT), "the always-on screen then stands");
+        app.touch(Touch::Down(x, y), &f, 400);
+        assert!(!app.display_on(), "one touch on it leaves the panel dark");
+        app.touch(Touch::Up, &f, 420);
+        app.touch(Touch::Down(x, y), &f, 500);
+        app.touch(Touch::Up, &f, 520);
+        assert!(app.display_on(), "a double tap lights the panel");
+        assert_eq!(app.screen(), Screen::Home, "and presses nothing");
+        // Once it has gone, the first touch brings it back and the second
+        // lights the panel.
+        press(&mut app, Key::Power, 1000);
+        app.tick(1000 + 365 + AOD_MS);
+        assert_eq!(app.panel(1000 + 365 + AOD_MS), None);
+        let t = 1000 + 365 + AOD_MS + 100;
+        app.touch(Touch::Down(x, y), &f, t);
+        assert!(!app.display_on(), "a touch on the dark panel lights nothing yet");
+        app.touch(Touch::Up, &f, t + 20);
+        assert_eq!(app.panel(t + 20), Some(AOD_LIGHT), "it brings the always-on screen up");
+        app.touch(Touch::Down(x, y), &f, t + 100);
+        app.touch(Touch::Up, &f, t + 120);
+        assert!(app.display_on(), "the second touch lights the panel");
+        assert_eq!(app.screen(), Screen::Home, "and presses nothing");
+    }
+
+    #[test]
+    fn the_touch_that_shows_the_always_on_screen_can_be_turned_off() {
+        let f = fonts();
+        let mut app = App::new(Screen::Home, W, H, PPD);
+        app.state.aod_tap = false;
+        press(&mut app, Key::Power, 0);
+        let t = 365 + AOD_MS + 100;
+        app.tick(t);
+        assert_eq!(app.panel(t), None);
+        let (x, y) = (W as f32 / 2.0, H as f32 / 2.0);
+        app.touch(Touch::Down(x, y), &f, t);
+        assert!(!app.display_on());
+        assert_eq!(app.panel(t), None, "a touch on the dark panel shows nothing");
+        app.touch(Touch::Up, &f, t + 20);
+        app.touch(Touch::Down(x, y), &f, t + 300);
+        app.touch(Touch::Up, &f, t + 320);
+        assert!(app.display_on(), "two quick touches still light the panel");
+    }
+
+    #[test]
+    fn the_double_tap_that_lights_the_panel_can_be_turned_off() {
+        let f = fonts();
+        let mut app = App::new(Screen::Home, W, H, PPD);
+        app.state.wake_tap = false;
+        press(&mut app, Key::Power, 0);
+        let t = 365 + AOD_MS + 100;
+        app.tick(t);
+        assert_eq!(app.panel(t), None);
+        let (x, y) = (W as f32 / 2.0, H as f32 / 2.0);
+        app.touch(Touch::Down(x, y), &f, t);
+        assert!(!app.display_on());
+        app.touch(Touch::Up, &f, t + 20);
+        assert_eq!(app.panel(t + 20), Some(AOD_LIGHT), "the first touch brings the always-on screen up");
+        app.touch(Touch::Down(x, y), &f, t + 100);
+        app.touch(Touch::Up, &f, t + 120);
+        assert!(!app.display_on(), "the second touch leaves it dark");
+        assert_eq!(app.panel(t + 120), Some(AOD_LIGHT));
+    }
+
+    #[test]
+    fn a_drag_or_a_long_press_is_not_a_tap() {
+        let f = fonts();
+        let mut app = App::new(Screen::Home, W, H, PPD);
+        press(&mut app, Key::Power, 0);
+        let t = 365 + AOD_MS + 100;
+        app.tick(t);
+        let (x, y) = (W as f32 / 2.0, H as f32 / 2.0);
+        // A finger that moves too far before it lifts is a drag.
+        app.touch(Touch::Down(x, y), &f, t);
+        app.touch(Touch::Move(x + W as f32 * 0.2, y), &f, t + 20);
+        app.touch(Touch::Up, &f, t + 40);
+        app.touch(Touch::Down(x, y), &f, t + 100);
+        app.touch(Touch::Up, &f, t + 120);
+        assert!(!app.display_on(), "a drag followed by a tap is not a double tap");
+        // A finger held past the tap window is not a tap either.
+        app.touch(Touch::Down(x, y), &f, t + 300);
+        app.touch(Touch::Up, &f, t + 300 + Tap::MAX_MS + 1);
+        app.touch(Touch::Down(x, y), &f, t + 600);
+        app.touch(Touch::Up, &f, t + 620);
+        assert!(!app.display_on(), "a long press followed by a tap is not a double tap");
+    }
+
+    #[test]
+    fn the_controllers_own_double_tap_lights_a_dark_panel() {
+        let mut app = App::new(Screen::Home, W, H, PPD);
+        press(&mut app, Key::Power, 0);
+        app.tick(365 + AOD_MS + 100);
+        assert!(!app.display_on());
+        app.gesture_wake(365 + AOD_MS + 200);
+        assert!(app.display_on(), "the controller's native double tap lights the panel");
+        assert_eq!(app.screen(), Screen::Home, "and presses nothing");
+        app.gesture_wake(365 + AOD_MS + 300);
+        assert!(app.display_on(), "a wake on a lit panel never turns it off");
+        app.state.wake_tap = false;
+        press(&mut app, Key::Power, 6000);
+        app.tick(6000 + 365 + AOD_MS);
+        app.gesture_wake(6000 + 365 + AOD_MS + 100);
+        assert!(!app.display_on(), "the switch turns the native double tap off too");
     }
 
     #[test]
@@ -322,7 +424,7 @@ mod tests {
         app.tick(0);
         app.tick(OFF);
         app.tick(OFF + 365);
-        assert_eq!(app.panel(OFF + 365), None);
+        assert_eq!(app.panel(OFF + 365), Some(AOD_LIGHT), "the always-on screen stands");
         let pulled = OFF + 1000;
         app.plugged(pulled, false);
         assert!(app.display_on(), "the cable coming out lights the panel");
@@ -345,7 +447,7 @@ mod tests {
         app.tick(0);
         press(&mut app, Key::Power, 0);
         app.tick(365);
-        assert_eq!(app.panel(365), None);
+        assert_eq!(app.panel(365), Some(AOD_LIGHT), "the always-on screen stands");
         let plugged = 1000;
         app.plugged(plugged, true);
         assert!(app.display_on() && app.charge_shown(), "the charging screen lights the panel");
@@ -356,8 +458,10 @@ mod tests {
         assert!(!app.display_on(), "then the panel goes dark again");
         assert!(app.panel(plugged + CHARGE_MS + 100).is_some(), "as the charging screen goes dark");
         app.tick(plugged + CHARGE_MS + 365);
-        assert_eq!(app.panel(plugged + CHARGE_MS + 365), None);
+        assert_eq!(app.panel(plugged + CHARGE_MS + 365), Some(AOD_LIGHT), "the always-on screen then stands");
         assert!(app.charging.is_none(), "and goes with it");
+        app.tick(plugged + CHARGE_MS + 365 + AOD_MS);
+        assert_eq!(app.panel(plugged + CHARGE_MS + 365 + AOD_MS), None);
     }
 
     #[test]
@@ -423,8 +527,11 @@ mod tests {
         assert_eq!(app.deadline(1000), Some(0), "a frame at a time");
         assert_eq!(app.panel(1300), Some(SLIDER_START));
         app.tick(1365);
-        assert_eq!(app.panel(1365), None, "then the panel goes off");
-        assert_eq!(app.deadline(1365), None);
+        assert_eq!(app.panel(1365), Some(AOD_LIGHT), "the always-on screen then stands");
+        assert_eq!(app.deadline(1365), Some(1365 + AOD_MS));
+        app.tick(1365 + AOD_MS);
+        assert_eq!(app.panel(1365 + AOD_MS), None, "then the panel goes off");
+        assert_eq!(app.deadline(1365 + AOD_MS), None);
     }
 
     #[test]

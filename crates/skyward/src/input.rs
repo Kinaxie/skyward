@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use evdev::raw_stream::RawDevice;
 use evdev::{AbsoluteAxisCode, EventSummary, InputEvent, KeyCode, PropType, SynchronizationCode};
-use skyward_config::Write;
+use skyward_config::{Transform, Write};
 use skyward_sys::sleep::Wakeful;
 use skyward_ui::app::{Key, Touch};
 use std::collections::HashSet;
@@ -10,12 +10,15 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub enum Event {
     /// A touch and when the panel reported it, on [`monotonic_ms`]'s clock.
     Touch(Touch, u64),
     /// A button going down, or coming back up.
     Key(Key, bool),
+    /// The touch controller recognized a wake gesture.
+    Wake,
 }
 
 /// Milliseconds on the monotonic clock, which the touch panel stamps its
@@ -35,7 +38,7 @@ fn set_nonblocking(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-const KEYS: [KeyCode; 4] = [KeyCode::KEY_POWER, KeyCode::KEY_VOLUMEUP, KeyCode::KEY_VOLUMEDOWN, KeyCode::KEY_BACK];
+const KEYS: [KeyCode; 5] = [KeyCode::KEY_POWER, KeyCode::KEY_VOLUMEUP, KeyCode::KEY_VOLUMEDOWN, KeyCode::KEY_BACK, KeyCode::KEY_WAKEUP];
 
 fn key_of(code: KeyCode) -> Option<Key> {
     match code {
@@ -66,6 +69,21 @@ fn slot0_value(dev: &RawDevice, axis: AbsoluteAxisCode, slots: usize) -> io::Res
     Ok(buf[1])
 }
 
+/// Where a raw panel point lands on the page, after the turn the panel is
+/// held at: the ranges are the panel's own, and `transform` says how its
+/// coordinates are turned to the page's.
+fn placed(raw: (i32, i32), x_range: (i32, i32), y_range: (i32, i32), transform: Transform, w: f32, h: f32) -> (f32, f32) {
+    let span = |r: (i32, i32)| (r.1 - r.0).max(1) as f32;
+    let u = ((raw.0 - x_range.0) as f32 / span(x_range)).clamp(0.0, 1.0);
+    let v = ((raw.1 - y_range.0) as f32 / span(y_range)).clamp(0.0, 1.0);
+    match transform {
+        Transform::None => (u * w, v * h),
+        Transform::Rotate90Cw => ((1.0 - v) * w, u * h),
+        Transform::Rotate90Ccw => (v * w, (1.0 - u) * h),
+        Transform::Rotate180 => ((1.0 - u) * w, (1.0 - v) * h),
+    }
+}
+
 /// The direct-touch panel. Only the first finger is followed (multitouch
 /// protocol B, slot 0).
 struct Panel {
@@ -79,13 +97,14 @@ struct Panel {
     was_down: bool,
     raw: (i32, i32),
     moved: bool,
+    transform: Transform,
     /// The kernel dropped events that were not read in time; what arrives
     /// up to the next report is incomplete.
     dropped: bool,
 }
 
 impl Panel {
-    fn new(path: PathBuf, dev: RawDevice) -> Result<Self> {
+    fn new(path: PathBuf, dev: RawDevice, transform: Transform) -> Result<Self> {
         let mut x_range = None;
         let mut y_range = None;
         let mut slots = 1;
@@ -108,8 +127,20 @@ impl Panel {
             return Err(io::Error::last_os_error()).context("stamp touch events with the monotonic clock");
         }
         set_nonblocking(dev.as_raw_fd()).context("make touch non-blocking")?;
-        let mut panel =
-            Panel { dev, path, x_range, y_range, slots, slot: 0, down: false, was_down: false, raw: (0, 0), moved: false, dropped: false };
+        let mut panel = Panel {
+            dev,
+            path,
+            x_range,
+            y_range,
+            slots,
+            slot: 0,
+            down: false,
+            was_down: false,
+            raw: (0, 0),
+            moved: false,
+            transform,
+            dropped: false,
+        };
         // The kernel drops a position equal to the one a slot already holds,
         // so a touch landing where the last one lifted carries no position;
         // start from what the panel holds now.
@@ -146,9 +177,7 @@ impl Panel {
                     }
                     let time = e.as_ref().time;
                     let at = time.tv_sec as u64 * 1000 + time.tv_usec as u64 / 1000;
-                    let span = |r: (i32, i32)| (r.1 - r.0).max(1) as f32;
-                    let x = (self.raw.0 - self.x_range.0) as f32 / span(self.x_range) * w;
-                    let y = (self.raw.1 - self.y_range.0) as f32 / span(self.y_range) * h;
+                    let (x, y) = placed(self.raw, self.x_range, self.y_range, self.transform, w, h);
                     match (self.was_down, self.down) {
                         (false, true) => out.push(Event::Touch(Touch::Down(x, y), at)),
                         (true, true) if self.moved => out.push(Event::Touch(Touch::Move(x, y), at)),
@@ -169,11 +198,50 @@ impl Panel {
                     self.raw.1 = v;
                     self.moved = true;
                 }
+                EventSummary::Key(_, KeyCode::KEY_WAKEUP, 1) => out.push(Event::Wake),
                 _ => {}
             }
         }
         Ok(())
     }
+}
+
+/// What a switch holds now, trimmed, when it can be read back at all.
+fn held_value(path: &str) -> Option<String> {
+    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+}
+
+/// Write the touchscreen's settings and check that the controller keeps them:
+/// what is written can be let go again by a controller whose driver is still
+/// coming back up, so a setting that does not read back as written is written
+/// once more. `what` names this moment in the log, for the one case that does
+/// not end as told.
+fn arm(writes: &[Write], what: &str) -> Result<()> {
+    for w in writes {
+        let want = w.value.trim();
+        let mut took = false;
+        for attempt in 0..3u32 {
+            fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+            match held_value(&w.path) {
+                // A switch that cannot be read back is taken to be written.
+                None => {
+                    took = true;
+                    break;
+                }
+                Some(held) if held == want => {
+                    took = true;
+                    break;
+                }
+                Some(_) if attempt < 2 => std::thread::sleep(Duration::from_millis(20)),
+                Some(_) => {}
+            }
+        }
+        if !took {
+            let held = held_value(&w.path).unwrap_or_default();
+            skyward_sys::kmsg(&format!("the touchscreen {what} let {} go, holding {held} at {}", w.value, w.path))?;
+        }
+    }
+    Ok(())
 }
 
 /// The touchscreen and the hardware buttons. /dev/input is watched, so a
@@ -189,12 +257,16 @@ pub struct Inputs {
     seen: HashSet<PathBuf>,
     /// What the touchscreen is told each time its panel is taken in.
     touch_writes: Vec<Write>,
+    /// The device to take as the panel, where the first direct multitouch
+    /// device is not the one that gives the page its coordinates.
+    remapped_device: Option<PathBuf>,
+    transform: Transform,
     w: f32,
     h: f32,
 }
 
 impl Inputs {
-    pub fn open(w: u32, h: u32, touch_writes: Vec<Write>) -> Result<Self> {
+    pub fn open(w: u32, h: u32, remapped_device: Option<String>, transform: Transform, touch_writes: Vec<Write>) -> Result<Self> {
         let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error()).context("create inotify instance");
@@ -215,6 +287,8 @@ impl Inputs {
             buttons: Vec::new(),
             seen: HashSet::new(),
             touch_writes,
+            remapped_device: remapped_device.map(PathBuf::from),
+            transform,
             w: w as f32,
             h: h as f32,
         };
@@ -230,6 +304,29 @@ impl Inputs {
     /// power, volume or back key as buttons. A panel taken in is told what
     /// the device description writes to the touchscreen.
     fn scan(&mut self) -> Result<()> {
+        // A device named in the configuration is taken first, whether or not
+        // it says it is a direct multitouch panel: a userspace remapper's
+        // virtual device need not.
+        if self.panel.is_none()
+            && let Some(path) = self.remapped_device.clone()
+            && path.exists()
+        {
+            match RawDevice::open(&path) {
+                Ok(dev) => {
+                    eprintln!("using the configured touch device {}", path.display());
+                    self.wakeful.add(dev.as_raw_fd())?;
+                    self.panel = Some(Panel::new(path.clone(), dev, self.transform)?);
+                    self.seen.insert(path);
+                    arm(&self.touch_writes, "as it came up")?;
+                    for w in &self.touch_writes {
+                        skyward_sys::kmsg(&format!("wrote {} to {} for the touchscreen", w.value, w.path))?;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("the configured touch device {} did not open: {e}", path.display());
+                }
+            }
+        }
         for (path, dev) in evdev::raw_stream::enumerate() {
             if !self.seen.insert(path.clone()) {
                 continue;
@@ -242,9 +339,9 @@ impl Inputs {
             eprintln!("input {}: {:?} direct={direct} multitouch={mt} keys={keys}", path.display(), dev.name().unwrap_or("?"));
             if direct && mt && self.panel.is_none() {
                 self.wakeful.add(dev.as_raw_fd())?;
-                self.panel = Some(Panel::new(path, dev)?);
+                self.panel = Some(Panel::new(path, dev, self.transform)?);
+                arm(&self.touch_writes, "as it came up")?;
                 for w in &self.touch_writes {
-                    fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
                     skyward_sys::kmsg(&format!("wrote {} to {} for the touchscreen", w.value, w.path))?;
                 }
             } else if keys {
@@ -280,6 +377,52 @@ impl Inputs {
         self.panel.is_some()
     }
 
+    /// Drop the panel when the device it was taken in at is gone, and take in
+    /// what is there instead: woken from a phone that slept, a controller can
+    /// come back as a device of another name, and the node the settings are
+    /// written to is then one nobody listens to.
+    fn look_for_panel_again(&mut self) -> Result<()> {
+        if let Some(panel) = &self.panel
+            && !panel.path.exists()
+        {
+            let path = panel.path.clone();
+            skyward_sys::kmsg(&format!("the touchscreen is no longer at {}, looking for it again", path.display()))?;
+            self.seen.remove(&path);
+            self.panel = None;
+            self.scan()?;
+        }
+        Ok(())
+    }
+
+    /// Tell the touchscreen what the phone's configuration says it needs again,
+    /// as when it is taken in: a controller woken from rest or from off takes
+    /// its settings afresh, and answers nothing until it has them.
+    ///
+    /// Woken from a phone that slept, the controller's own driver finishes
+    /// coming back on a work of its own, and puts its defaults back in place
+    /// after the panel is lit: what is written now can be undone a moment
+    /// later, leaving a controller that reports nothing. So the settings are
+    /// written again a few times after the panel comes on, each time reading
+    /// what the controller holds and writing again if it let the setting go.
+    pub fn rearm(&mut self) -> Result<()> {
+        self.look_for_panel_again()?;
+        if self.panel.is_none() {
+            return Ok(());
+        }
+        arm(&self.touch_writes, "again")?;
+        skyward_sys::kmsg("told the touchscreen its settings again, woken with the panel")?;
+        let writes = self.touch_writes.clone();
+        std::thread::spawn(move || {
+            for after in [Duration::from_millis(250), Duration::from_millis(750)] {
+                std::thread::sleep(after);
+                if let Err(e) = arm(&writes, "once more") {
+                    eprintln!("touch settings not written again: {e:#}");
+                }
+            }
+        });
+        Ok(())
+    }
+
     /// Readable while a device has something queued, or /dev/input changed.
     pub fn fd(&self) -> RawFd {
         self.wakeful.fd()
@@ -288,6 +431,7 @@ impl Inputs {
     /// Everything the devices have queued, as touches and key presses.
     pub fn read(&mut self) -> Result<Vec<Event>> {
         if self.changed()? {
+            self.look_for_panel_again()?;
             self.scan()?;
         }
         let mut out = Vec::new();
@@ -307,12 +451,17 @@ impl Inputs {
             match b.fetch_events() {
                 Ok(events) => {
                     // The kernel's own repeats of a key held are left out;
-                    // the UI times its own.
+                    // the UI times its own. A wake reported by the touch
+                    // controller is a press with no release of its own.
                     for e in events {
-                        if let EventSummary::Key(_, code, value @ (0 | 1)) = e.destructure()
-                            && let Some(k) = key_of(code)
-                        {
-                            out.push(Event::Key(k, value == 1));
+                        if let EventSummary::Key(_, code, value @ (0 | 1)) = e.destructure() {
+                            if code == KeyCode::KEY_WAKEUP {
+                                if value == 1 {
+                                    out.push(Event::Wake);
+                                }
+                            } else if let Some(k) = key_of(code) {
+                                out.push(Event::Key(k, value == 1));
+                            }
                         }
                     }
                 }

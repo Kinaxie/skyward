@@ -166,7 +166,7 @@ impl App {
     /// as the panel goes off or comes up.
     pub fn compose(&mut self, out: &mut Canvas, f: &Fonts, info: &DeviceInfo, clock: &str, now: u64) {
         let charge = self.charging.as_ref().map_or(0.0, |c| c.shown.level(now));
-        let aod = self.aod.filter(|since| now.saturating_sub(*since) < AOD_MS);
+        let aod = self.aod.filter(|at| now >= *at && now.saturating_sub(*at) < AOD_MS);
         let shown = fmt::clock_shown(clock, self.state.hour12);
         if charge < 1.0 && aod.is_none() {
             self.compose_page(out, f, info, &shown, now);

@@ -168,10 +168,16 @@ fn normal_max(max: u32) -> Result<u32> {
         let cell: [u8; 4] = bytes.as_slice().try_into().map_err(|_| anyhow!("{} is not one cell", path.display()))?;
         Ok(u32::from_be_bytes(cell))
     };
-    let (normal, full) = NORMAL_MAX
-        .iter()
-        .find(|(normal, _)| node.join(normal).exists())
-        .with_context(|| format!("panel {name} gives its normal maximum as none of {NORMAL_MAX:?}"))?;
+    // A panel that gives none of these, as the phones this tree builds for
+    // do — their nodes carry only qcom,mdss-dsi-bl-max-level — has no
+    // brightness range above the backlight's own: all of it is the normal
+    // maximum, and the slider spans it. This used to stop the recovery
+    // before it drew anything, which is a screen that stays black, so it is
+    // said in the kernel log instead and the whole range is taken.
+    let Some((normal, full)) = NORMAL_MAX.iter().find(|(normal, _)| node.join(normal).exists()) else {
+        skyward_sys::kmsg(&format!("panel {name} gives none of {NORMAL_MAX:?}; the backlight's whole range is its normal maximum"))?;
+        return Ok(max);
+    };
     let (normal, full) = (cell(normal)?, cell(full)?);
     ensure!(normal > 0 && normal <= full, "panel {name}: normal maximum {normal} out of {full}");
     Ok((f64::from(max) * f64::from(normal) / f64::from(full)).round() as u32)
@@ -861,6 +867,54 @@ fn log_mounted(mounted: &Opened) -> Result<()> {
     skyward_sys::kmsg(&format!("{} holds {} at {}", mounted.mapped.display(), mounted.filesystem, skyward_crypto::data::MOUNT))
 }
 
+/// Where the terminal finds the script that backs up and restores the apps
+/// the phone keeps in its system partitions.
+const APPS_AT: &str = "/system/bin/skyward-apps";
+
+/// Put that script where the terminal finds it, and mount the slot's own
+/// partitions read-only so that it can read the apps in them. A partition
+/// already mounted is left as it is.
+fn ready_apps() {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::write(APPS_AT, include_str!("apps.sh")) {
+        Ok(()) => {
+            let _ = std::fs::set_permissions(APPS_AT, std::fs::Permissions::from_mode(0o755));
+        }
+        Err(e) => {
+            let _ = skyward_sys::kmsg(&format!("the apps script was not written: {e:#}"));
+        }
+    }
+    let Ok(Some(slot)) = skyward_vab::current_slot() else { return };
+    for base in ["system", "system_ext", "product", "vendor"] {
+        if let Err(e) = skyward_vab::mount_one(slot, base) {
+            let _ = skyward_sys::kmsg(&format!("{base} is not mounted for the apps: {e:#}"));
+        }
+    }
+}
+
+/// What the decrypt page says when the key service turned a credential
+/// down: the two refusals a user can act on in their own words, and any
+/// other fault as the key service put it, for a log or a report.
+fn unlock_refusal(l: skyward_ui::Lang, why: &str) -> String {
+    if why.contains("does not recognise that credential") || why.contains("incorrect credential") {
+        return l.among("密码不正确，请重试。", "密碼不正確，請重試。", "Incorrect password; try again.").to_string();
+    }
+    if why.contains("holding off further tries") || why.contains("holds off further tries") {
+        let seconds = why
+            .split("another ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .filter(|n| n.chars().all(|c| c.is_ascii_digit()));
+        return match seconds {
+            Some(seconds) => l
+                .among("尝试次数过多，请 {seconds} 秒后再试。", "嘗試次數過多，請 {seconds} 秒後再試。", "Too many tries; wait {seconds} seconds.")
+                .replace("{seconds}", seconds),
+            None => l.among("尝试次数过多，请稍后再试。", "嘗試次數過多，請稍後再試。", "Too many tries; wait a while.").to_string(),
+        };
+    }
+    why.to_string()
+}
+
 /// Show what the data partition still keeps closed: the first user whose
 /// own files wait on a screen lock they set themselves, with the control
 /// that lock is answered with, or nothing. Users whose credential the phone
@@ -1011,7 +1065,12 @@ fn detach(services: Vec<Service>) -> Detach {
 /// on a phone that has them, and checks a zip's signature before its
 /// install script runs.
 fn install_options(app: &App) -> Options {
-    Options { keep: app.state.keep_recovery && app.state.recovery_partitions, signed: app.state.check_signature }
+    // The switch alone decides. Whether the phone has recovery partitions to
+    // keep Skyward in is the install's own to find, from the partitions
+    // themselves, and it says in the kernel log what it found; a check here
+    // could only turn the switch off without a word, as it did whenever the
+    // links this page looks for were not the ones the phone has.
+    Options { keep: app.state.keep_recovery, signed: app.state.check_signature }
 }
 
 /// How often the WLAN page scans while it shows.
@@ -1096,8 +1155,36 @@ pub fn run(cfg: &DeviceConfig, programs: &[Service], font: &Path, mono: &Path, r
     // A uevent may be a charger or a computer attached or taken away: the
     // battery is read at once, and the phone stays awake until it is.
     let uevents = uevent::Listener::open()?;
+    // The touch controller's own double tap, where the phone's configuration
+    // names its common-data interface; it reports a wake with no coordinates.
+    let mut gesture = match cfg.touch.xiaomi_double_tap.as_ref().map(crate::touch::Gesture::open).transpose() {
+        Ok(gesture) => gesture,
+        Err(error) => {
+            skyward_sys::kmsg(&format!("native double tap unavailable: {error:#}"))?;
+            None
+        }
+    };
+    let mut said = None::<String>;
     loop {
-        pages.turn(&sleeper, &uevents)?;
+        if let Some(error) = gesture.as_mut().and_then(|native| native.set(pages.app.state.wake_tap).err()) {
+            skyward_sys::kmsg(&format!("native double tap failed: {error:#}"))?;
+            gesture.take();
+        }
+        // A turn that ends badly — a panel that will not take a commit, a
+        // frame that does not come — is told of and the loop goes on. The
+        // phone's own screen is the only way it can be told anything, and a
+        // recovery that has stopped drawing answers nothing at all.
+        match pages.turn(&sleeper, &uevents) {
+            Ok(()) => said = None,
+            Err(e) => {
+                let why = format!("{e:#}");
+                if said.as_deref() != Some(why.as_str()) {
+                    skyward_sys::kmsg(&format!("a turn of the screen ended: {why}"))?;
+                    said = Some(why);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
     }
 }
 
@@ -1143,6 +1230,18 @@ struct Pages<'a> {
     /// Whether the panel's frame memory has been blacked out for an off
     /// panel; cleared once a real frame is shown again.
     blanked: bool,
+    /// Said once a click the motor turned down, and no more.
+    motor_refused: bool,
+    /// The folder served to the network while the WLAN is joined and the
+    /// user's storage is open.
+    serve: Option<crate::fileserve::Server>,
+    /// When serving was last tried, so a port that stays taken is not asked
+    /// for again on every turn.
+    serve_at: Option<Instant>,
+    /// Whether the phone slept and woke since the page was last shown: the
+    /// panel may never have gone fully off, so it comes back on as it was,
+    /// and the touch controller behind it needs its settings again.
+    woken: bool,
     /// When the panel gone dark began to rest.
     rested_at: Option<Instant>,
     /// Started for fastboot, the port goes to the phone's own fastbootd. The
@@ -1252,7 +1351,7 @@ impl<'a> Pages<'a> {
             surface.settle()?;
         }
         eprintln!("display {}", surface.describe());
-        let inputs = Inputs::open(w, h, cfg.touch.writes.clone())?;
+        let inputs = Inputs::open(w, h, cfg.touch.remapped_device.clone(), cfg.touch.transform, cfg.touch.writes.clone())?;
         let started = Instant::now();
         let control = Control::open()?;
         let haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
@@ -1388,6 +1487,10 @@ impl<'a> Pages<'a> {
             read_at,
             asked: None,
             blanked: false,
+            motor_refused: false,
+            serve: None,
+            serve_at: None,
+            woken: false,
             rested_at: None,
             fastboot,
             port_at,
@@ -1545,6 +1648,7 @@ impl<'a> Pages<'a> {
             self.wlan = Some(wlan::Worker::start(w.clone(), modules, libraries, self.servers.clone())?);
         }
         self.scanned_at = Instant::now();
+        ready_apps();
         self.app.state.update_server = cfg.update.is_some();
         self.drive_at = Instant::now();
         Ok(())
@@ -1580,7 +1684,10 @@ impl<'a> Pages<'a> {
         let now = monotonic_ms();
         for slept in sleeper.slept() {
             match slept {
-                Slept::Woke => skyward_sys::kmsg("the phone slept and woke")?,
+                Slept::Woke => {
+                    self.woken = true;
+                    skyward_sys::kmsg("the phone slept and woke")?;
+                }
                 Slept::Refused(why) => skyward_sys::kmsg(&format!("the phone did not sleep: {why}"))?,
             }
         }
@@ -1602,6 +1709,7 @@ impl<'a> Pages<'a> {
         self.merge_told(now)?;
         self.systems_told(now)?;
         self.wlan_told()?;
+        self.serve_files(now)?;
         self.keep_settings(now)?;
         self.updates_told(now)?;
         self.skyward_told(now)?;
@@ -1609,6 +1717,63 @@ impl<'a> Pages<'a> {
         self.shell_told()?;
         self.take_in(drive_told, now)?;
         self.offer_storage(now)
+    }
+
+    /// The vbmeta flags of the slot the phone runs from, as its header
+    /// holds them.
+    fn avb_status(&self) -> Result<skyward_ui::app::AvbStatus, String> {
+        let slot = skyward_vab::current_slot().map_err(|e| format!("{e:#}"))?.ok_or("not an A/B phone")?;
+        let suffix = if slot == skyward_vab::Slot::A { "_a" } else { "_b" };
+        let state = skyward_install::avb::read(Path::new(skyward_block::BY_NAME), suffix).map_err(|e| format!("{e:#}"))?;
+        let unlocked = skyward_block::boot_param("androidboot.flash.locked").ok().flatten().as_deref() == Some("0");
+        let (verity, verification) = (state.verity_enabled(), state.verification_enabled());
+        Ok(skyward_ui::app::AvbStatus { partition: state.partition, verity, verification, unlocked })
+    }
+
+    /// Write the flags to both slots, as the AVB page asks, and read the
+    /// running slot back.
+    fn set_avb(&self, verity: bool, verification: bool) -> Result<skyward_ui::app::AvbStatus, String> {
+        let unlocked = skyward_block::boot_param("androidboot.flash.locked").ok().flatten().as_deref() == Some("0");
+        if !unlocked {
+            return Err("the bootloader is locked; vbmeta is not written".into());
+        }
+        let dir = Path::new(skyward_block::BY_NAME);
+        skyward_install::avb::set_verity(dir, &["_a", "_b"], verity).map_err(|e| format!("{e:#}"))?;
+        skyward_install::avb::set_verification(dir, &["_a", "_b"], verification).map_err(|e| format!("{e:#}"))?;
+        skyward_sys::kmsg(&format!("vbmeta flags written on both slots: verity={verity}, verification={verification}"))
+            .map_err(|e| format!("{e:#}"))?;
+        self.avb_status()
+    }
+
+    /// Serve the owner's shared storage over the WLAN, once the network is
+    /// joined and the storage is open, so a computer on the same network can
+    /// take a package or an image without a cable. The server is let go when
+    /// either goes.
+    fn serve_files(&mut self, now: u64) -> Result<()> {
+        let ready = self.app.state.file_serve
+            && self.app.state.online()
+            && self.app.state.place_open(Place::Storage);
+        if !ready {
+            self.serve = None;
+            return Ok(());
+        }
+        let retry = self.serve_at.is_some_and(|at| at.elapsed() < Duration::from_secs(10));
+        if self.serve.is_none() && !retry {
+            match crate::fileserve::Server::start(PathBuf::from("/sdcard"), 8080) {
+                Ok(server) => {
+                    let url = server.url();
+                    skyward_sys::kmsg(&format!("the shared storage is served at {url}"))?;
+                    self.app.report(&format!("无线传输：{url}"), now);
+                    self.serve = Some(server);
+                    self.serve_at = None;
+                }
+                Err(e) => {
+                    skyward_sys::kmsg(&format!("the shared storage is not served: {e:#}"))?;
+                    self.serve_at = Some(Instant::now());
+                }
+            }
+        }
+        Ok(())
     }
 
     /// What time passing asks for: the motor's clicks and ticks, and the
@@ -1633,16 +1798,30 @@ impl<'a> Pages<'a> {
 
     /// One click of the motor, as strong as the settings say.
     fn click(&mut self) -> Result<()> {
-        if let Some(h) = &mut self.haptics {
-            h.click(self.app.state.vibration)?;
+        if let Some(h) = &mut self.haptics
+            && let Err(e) = h.click(self.app.state.vibration)
+        {
+            self.motor_said("click", e)?;
         }
         Ok(())
     }
 
     /// The motor's ticks of the screen going off.
     fn ticks(&mut self) -> Result<()> {
-        if let Some(h) = &mut self.haptics {
-            h.ticks()?;
+        if let Some(h) = &mut self.haptics
+            && let Err(e) = h.ticks()
+        {
+            self.motor_said("ticks", e)?;
+        }
+        Ok(())
+    }
+
+    /// Say once that the motor took nothing, and keep trying: a click the
+    /// driver turns down costs its own tap, not the motor.
+    fn motor_said(&mut self, what: &str, e: anyhow::Error) -> Result<()> {
+        if !self.motor_refused {
+            skyward_sys::kmsg(&format!("the motor took no {what}, and is left trying: {e:#}"))?;
+            self.motor_refused = true;
         }
         Ok(())
     }
@@ -1691,7 +1870,11 @@ impl<'a> Pages<'a> {
         let mut shown = false;
         if panel.is_some() {
             // A display turned off comes on again with a frame drawn for it.
-            if self.app.take_dirty() || !self.surface.is_on() {
+            // A phone that slept and woke comes back the same way even where
+            // the panel never went fully off: what the controller was told
+            // before it slept is gone.
+            let woke = std::mem::take(&mut self.woken) || !self.surface.is_on();
+            if self.app.take_dirty() || woke {
                 let t0 = Instant::now();
                 self.app.compose(&mut self.screen, &self.fonts, &self.info, &self.shown_clock, now);
                 self.surface.present(&self.screen)?;
@@ -1700,6 +1883,11 @@ impl<'a> Pages<'a> {
                     fs::write(path, &self.screen.data).with_context(|| format!("write {}", path.display()))?;
                 }
                 shown = true;
+            }
+            // A controller that went dark with the panel takes its settings
+            // again once the panel is lit, and works from them only.
+            if woke || self.blanked {
+                self.inputs.rearm()?;
             }
             self.blanked = false;
         } else if !self.blanked {
@@ -1722,6 +1910,12 @@ impl<'a> Pages<'a> {
             // Lit, a panel that came on again switches to its fastest
             // refresh.
             self.surface.speed_up()?;
+            self.rested_at = None;
+        } else if self.inputs.has_panel() {
+            // The panel stays on, showing black, so the touch controller
+            // keeps scanning: a touch on the dark panel is to bring up the
+            // always-on screen, and a resting panel rests its controller
+            // with it.
             self.rested_at = None;
         } else if self.surface.is_on() {
             // With the backlight off, the panel rests, and the touch
@@ -1809,8 +2003,11 @@ impl<'a> Pages<'a> {
     /// Whether the phone may sleep. With the display off, it sleeps unless
     /// something needs it awake: work under way, fastboot or sideload, a
     /// restart on its way, a command running in the terminal, a network
-    /// being joined, the battery read after a uevent, or a computer on the
-    /// USB port, whose adb and file transfer stay up.
+    /// being joined, the battery read after a uevent, a computer on the
+    /// USB port, whose adb and file transfer stay up, or a touch panel,
+    /// whose touches on the dark panel bring up the always-on screen: its
+    /// input device carries no wakeup, so a suspended phone would never
+    /// hear them.
     fn may_sleep(&self) -> Result<bool> {
         let systems_busy = self.systems_worker.as_ref().is_some_and(systems::Worker::busy);
         let busy = self.installer.is_some()
@@ -1832,6 +2029,7 @@ impl<'a> Pages<'a> {
             None => false,
         };
         Ok(self.surface.is_off()
+            && !self.inputs.has_panel()
             && !busy
             && !self.fastboot
             && !self.sideloading
@@ -2352,7 +2550,8 @@ impl Pages<'_> {
             }
             decrypt::Ended::Unlocked(Err(why)) => {
                 skyward_sys::kmsg(&format!("what was entered did not open the user's files: {why}"))?;
-                self.app.unlock_failed(why, now);
+                let said = unlock_refusal(self.app.state.lang, &why);
+                self.app.unlock_failed(said, now);
             }
         }
         // Screenshots taken while internal storage was closed go into
@@ -2459,6 +2658,7 @@ impl Pages<'_> {
                 Incoming::Input(Event::Touch(t, at)) => self.app.touch(t, &self.fonts, at),
                 Incoming::Input(Event::Key(k, true)) => self.app.key(k, now),
                 Incoming::Input(Event::Key(k, false)) => self.app.key_up(k, now),
+                Incoming::Input(Event::Wake) => self.app.gesture_wake(now),
             };
             // What the pages ask for in answer to the work done goes on
             // after it.
@@ -2529,6 +2729,8 @@ impl Pages<'_> {
             Effect::Cancel => self.cancel_install(now)?,
             Effect::ReadMounts => self.app.set_mounts(self.mounts()),
             Effect::ReadSlots => self.app.set_boot_slots(read_slots()),
+            Effect::ReadAvb => self.app.set_avb(self.avb_status()),
+            Effect::SetAvb { verity, verification } => self.app.avb_changed(self.set_avb(verity, verification), now),
             Effect::SetSlot(slot) => self.app.slot_switched(set_slot(slot), now),
             Effect::ReadSystems => self.systems()?.send(systems::Task::Read),
             // An install still under way may yet write the boot
