@@ -872,31 +872,6 @@ fn log_mounted(mounted: &Opened) -> Result<()> {
     skyward_sys::kmsg(&format!("{} holds {} at {}", mounted.mapped.display(), mounted.filesystem, skyward_crypto::data::MOUNT))
 }
 
-/// Where the terminal finds the script that backs up and restores the apps
-/// the phone keeps in its system partitions.
-const APPS_AT: &str = "/system/bin/skyward-apps";
-
-/// Put that script where the terminal finds it, and mount the slot's own
-/// partitions read-only so that it can read the apps in them. A partition
-/// already mounted is left as it is.
-fn ready_apps() {
-    use std::os::unix::fs::PermissionsExt;
-    match std::fs::write(APPS_AT, include_str!("apps.sh")) {
-        Ok(()) => {
-            let _ = std::fs::set_permissions(APPS_AT, std::fs::Permissions::from_mode(0o755));
-        }
-        Err(e) => {
-            let _ = skyward_sys::kmsg(&format!("the apps script was not written: {e:#}"));
-        }
-    }
-    let Ok(Some(slot)) = skyward_vab::current_slot() else { return };
-    for base in ["system", "system_ext", "product", "vendor"] {
-        if let Err(e) = skyward_vab::mount_one(slot, base) {
-            let _ = skyward_sys::kmsg(&format!("{base} is not mounted for the apps: {e:#}"));
-        }
-    }
-}
-
 /// Whether the phone is shut, as its inner touch panel's driver reports it
 /// from the fold sensor it follows: "capfold_status: 1" open, "0" shut.
 fn shut_now() -> Option<bool> {
@@ -1702,7 +1677,6 @@ impl<'a> Pages<'a> {
             self.wlan = Some(wlan::Worker::start(w.clone(), modules, libraries, self.servers.clone())?);
         }
         self.scanned_at = Instant::now();
-        ready_apps();
         self.app.state.update_server = cfg.update.is_some();
         self.drive_at = Instant::now();
         Ok(())
