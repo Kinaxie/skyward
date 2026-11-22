@@ -93,8 +93,11 @@ pub struct DeviceConfig {
 pub struct Stock {
     /// The build's version, such as OS4.0.4.0.XPACNXM.
     pub version: String,
-    /// Where the package is downloaded from, over HTTPS.
-    pub package: String,
+    /// Where the package is downloaded from, over HTTPS; none where the
+    /// configuration is kept without one, and the image is built on a stock
+    /// recovery taken out by hand.
+    #[serde(default)]
+    pub package: Option<String>,
     /// The recovery partition's SHA-256, in lowercase hex.
     pub recovery: String,
 }
@@ -611,13 +614,14 @@ impl DeviceConfig {
             }
         }
         if let Some(stock) = &cfg.stock {
-            let name = stock.package.rsplit('/').next().unwrap_or_default();
-            ensure!(
-                stock.package.starts_with("https://") && name.ends_with(".zip") && name.contains(&stock.version) && !stock.version.is_empty(),
-                "[stock] package: {} is not an HTTPS address of the full package of {}",
-                stock.package,
-                stock.version
-            );
+            if let Some(package) = &stock.package {
+                let name = package.rsplit('/').next().unwrap_or_default();
+                ensure!(
+                    package.starts_with("https://") && name.ends_with(".zip") && name.contains(&stock.version) && !stock.version.is_empty(),
+                    "[stock] package: {package} is not an HTTPS address of the full package of {}",
+                    stock.version
+                );
+            }
             ensure!(
                 stock.recovery.len() == 64 && stock.recovery.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
                 "[stock] recovery: {} is not a SHA-256 in lowercase hex",
@@ -860,7 +864,8 @@ mod tests {
         ] {
             let stock = DeviceConfig::parse(text).unwrap().stock.expect("a stock build to build on");
             assert_eq!(stock.version, version);
-            assert!(stock.package.ends_with(".zip") && stock.package.contains(&format!("/{version}/")), "{}", stock.package);
+            let package = stock.package.as_deref().expect("a full update package to take the recovery out of");
+            assert!(package.ends_with(".zip") && package.contains(&format!("/{version}/")), "{package}");
         }
     }
 
