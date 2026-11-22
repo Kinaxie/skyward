@@ -512,8 +512,8 @@ mod tests {
         scroll_to(&mut app, &f, end, 0);
         app.tick(2000);
         assert_eq!((app.title.level(2000), app.bar.level(2000)), (1.0, 1.0), "scrolled down, the bar is up");
-        tap_at(&mut app, &f, &i, Action::Open(Screen::Choose(Place::UsbDrive)), 3000);
-        assert_eq!(app.screen(), Screen::Choose(Place::UsbDrive));
+        tap_at(&mut app, &f, &i, Action::Open(Screen::About), 3000);
+        assert_eq!(app.screen(), Screen::About);
         tap_back(&mut app, &f, &i, 4000);
         assert_eq!(app.screen(), Screen::Settings);
         let mut c = Canvas::new(W, H);

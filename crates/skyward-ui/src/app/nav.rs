@@ -479,4 +479,12 @@ mod tests {
         app.open(Screen::Settings);
         assert!(app.frame(&f, &i).back, "a page opened over it goes back");
     }
+
+    #[test]
+    fn settings_does_not_offer_the_install_chooser_as_a_usb_device() {
+        let (f, i) = (fonts(), info());
+        let mut app = opened(Screen::Settings, &f, &i);
+        let hits = &app.frame(&f, &i).hits;
+        assert!(!hits.iter().any(|h| h.action == Action::Open(Screen::Choose(Place::UsbDrive))));
+    }
 }

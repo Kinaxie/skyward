@@ -385,13 +385,12 @@ pub fn settings(cx: &Ctx) -> Frame {
         y,
         &[
             Row::new(l.pick(texts::settings::FILE_TRANSFER)).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer)),
-            Row::new(l.pick(texts::local::USB_DRIVE)).icon(PURPLE, Icon::UsbDrive),
             Row::new(l.pick(texts::local::WIRELESS_TRANSFER)).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve)),
         ],
     );
     out.extend(hits(
         &usb.rows,
-        &[Action::Toggle(Switch::FileTransfer), Action::Open(Screen::Choose(Place::UsbDrive)), Action::Toggle(Switch::FileServe)],
+        &[Action::Toggle(Switch::FileTransfer), Action::Toggle(Switch::FileServe)],
     ));
     y = widgets::footnote(&mut c, t, f, usb.bottom, l.pick(texts::settings::FILE_TRANSFER_NOTE));
     let note = l.pick(texts::local::WIRELESS_NOTE);
