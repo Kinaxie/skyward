@@ -126,6 +126,20 @@ not been verified.
 | 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM (Android 16) |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM (Android 17) |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
+| 🚧 Xiaomi 12S Pro | `unicorn` | OS3.0.4.0.VLECNXM (Android 15) |
+| 🚧 REDMI K50 Ultra | `diting` | OS3.0.2.0.VLFCNXM (Android 15) |
+| 🚧 REDMI K60 | `mondrian` | OS2.0.6.0.VMNEUXM (Android 15) |
+| 🚧 REDMI K70 | `vermeer` | OS3.0.307.0.WNKCNXM (Android 16) |
+| 🚧 REDMI K70 Pro | `manet` | — (no stock package in the configuration) |
+| 🚧 REDMI Turbo 4 Pro | `onyx` | OS2.0.216.0.VOLCNXM (Android 15) |
+| 🚧 Xiaomi Pad 6S Pro 12.4 | `sheng` | OS3.0.303.0.WNXCNXM (Android 16) |
+| 🚧 Xiaomi Pad 7 Pro | `muyu` | OS4.0.3.0.XOYCNXM (Android 17) |
+| 🚧 Xiaomi Pad 8 Pro | `piano` | OS4.0.6.0.XPYCNXM (Android 17) |
+| 🚧 Xiaomi MIX Flip 2 | `bixi` | OS4.0.0.11.XOHCNXM (Android 17) |
+| 🚧 Xiaomi MIX Flip | `ruyi` | OS3.0.305.0.WNIMIXM (Android 16) |
+
+`bixi` and `ruyi` are foldables. Their configurations mark the outer panel with
+`[display] cover_display = true`; the recovery drives the inner panel only for now.
 
 ## Installing Skyward
 

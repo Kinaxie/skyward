@@ -114,6 +114,19 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM（Android 16） |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
+| 🚧 小米 12S Pro | `unicorn` | OS3.0.4.0.VLECNXM（Android 15） |
+| 🚧 REDMI K50 Ultra | `diting` | OS3.0.2.0.VLFCNXM（Android 15） |
+| 🚧 REDMI K60 | `mondrian` | OS2.0.6.0.VMNEUXM（Android 15） |
+| 🚧 REDMI K70 | `vermeer` | OS3.0.307.0.WNKCNXM（Android 16） |
+| 🚧 REDMI K70 Pro | `manet` | —（配置未带 stock 包） |
+| 🚧 REDMI Turbo 4 Pro | `onyx` | OS2.0.216.0.VOLCNXM（Android 15） |
+| 🚧 小米平板 6S Pro 12.4 | `sheng` | OS3.0.303.0.WNXCNXM（Android 16） |
+| 🚧 小米平板 7 Pro | `muyu` | OS4.0.3.0.XOYCNXM（Android 17） |
+| 🚧 小米平板 8 Pro | `piano` | OS4.0.6.0.XPYCNXM（Android 17） |
+| 🚧 小米 MIX Flip 2 | `bixi` | OS4.0.0.11.XOHCNXM（Android 17） |
+| 🚧 小米 MIX Flip | `ruyi` | OS3.0.305.0.WNIMIXM（Android 16） |
+
+`bixi` 和 `ruyi` 是折叠屏，配置里用 `[display] cover_display = true` 标记了外屏；当前 recovery 只驱动内屏，外屏支持尚未接入。
 
 ## 安装 Skyward
 
