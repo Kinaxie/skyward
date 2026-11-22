@@ -59,6 +59,8 @@ pub struct Settings {
     pub file_transfer: bool,
     /// The owner's shared storage is served over the WLAN, read-only.
     pub file_serve: bool,
+    /// An update applied from the install page is merged there and then.
+    pub merge_after: bool,
     pub install: Install,
     pub backup: Backup,
     pub logs: Logs,
@@ -141,6 +143,7 @@ impl Settings {
             vibration: state.vibration,
             file_transfer: state.file_transfer,
             file_serve: state.file_serve,
+            merge_after: state.merge_after,
             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
             backup: Backup {
                 parts: names(&state.backup, &PARTS),
@@ -206,6 +209,7 @@ impl Settings {
         }
         state.file_transfer = self.file_transfer;
         state.file_serve = self.file_serve;
+        state.merge_after = self.merge_after;
         state.check_signature = self.install.check_signature;
         state.keep_recovery = self.install.keep_recovery;
         state.backup = picked(&self.backup.parts, &PARTS);

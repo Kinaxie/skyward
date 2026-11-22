@@ -139,7 +139,7 @@ pub fn confirm_label(which: Confirm, s: &State) -> (&'static str, bool) {
         Confirm::RunScript => (confirm::INSTALL, true),
         Confirm::Merge => (confirm::MERGE, true),
         Confirm::Relabel => (confirm::FIX, true),
-        Confirm::Avb => (crate::lang::same("Write AVB"), true),
+        Confirm::Avb => (texts::local::AVB_WRITE, true),
         Confirm::SwitchSystem => (confirm::SWITCH_AND_REBOOT, false),
         Confirm::RemoveSystem => (confirm::REMOVE, true),
         Confirm::InstallSystem => (confirm::INSTALL, false),
@@ -359,11 +359,11 @@ pub fn settings(cx: &Ctx) -> Frame {
     let general = widgets::list(&mut c, t, f, y, &[
         Row::new(l.pick(texts::page::LANGUAGE)).icon(BLUE, Icon::Globe).trail(Trail::Value(l.name())),
         Row::new(l.pick(texts::page::TIME_ZONE)).icon(ORANGE, Icon::Clock).trail(Trail::Value(l.pick(TIME_ZONES[s.time_zone].0))),
-        Row::new(l.among("时间格式", "時間格式", "Time format")).icon(BLUE, Icon::Clock).trail(Trail::Value(fmt::hour12_name(l, s.hour12))),
-        Row::new(l.among("息屏日期", "息屏日期", "Always-on date")).icon(SLATE, Icon::Clock).trail(Trail::Value(fmt::aod_date_name(l, s.aod_date))),
-        Row::new(l.among("文件排序", "檔案排序", "File sorting")).icon(SLATE, Icon::Folder).trail(Trail::Value(fmt::sort_name(l, s.sort))),
-        Row::new(l.among("单击亮息屏", "輕觸亮息屏", "Single tap for always-on")).icon(SLATE, Icon::Lock).trail(Trail::Switch(s.aod_tap)),
-        Row::new(l.among("双击亮屏", "雙擊亮屏", "Double tap to wake")).icon(BLUE, Icon::Power).trail(Trail::Switch(s.wake_tap)),
+        Row::new(l.pick(texts::local::TIME_FORMAT)).icon(BLUE, Icon::Clock).trail(Trail::Value(fmt::hour12_name(l, s.hour12))),
+        Row::new(l.pick(texts::local::ALWAYS_ON_DATE)).icon(SLATE, Icon::Clock).trail(Trail::Value(fmt::aod_date_name(l, s.aod_date))),
+        Row::new(l.pick(texts::local::FILE_SORTING)).icon(SLATE, Icon::Folder).trail(Trail::Value(fmt::sort_name(l, s.sort))),
+        Row::new(l.pick(texts::local::SINGLE_TAP_AOD)).icon(SLATE, Icon::Lock).trail(Trail::Switch(s.aod_tap)),
+        Row::new(l.pick(texts::local::DOUBLE_TAP_WAKE)).icon(BLUE, Icon::Power).trail(Trail::Switch(s.wake_tap)),
     ]);
     out.extend(hits(
         &general.rows,
@@ -385,8 +385,8 @@ pub fn settings(cx: &Ctx) -> Frame {
         y,
         &[
             Row::new(l.pick(texts::settings::FILE_TRANSFER)).icon(BLUE, Icon::Usb).trail(Trail::Switch(s.file_transfer)),
-            Row::new(l.among("USB 设备", "USB 裝置", "USB drive")).icon(PURPLE, Icon::UsbDrive),
-            Row::new(l.among("无线传输", "無線傳輸", "Wireless transfer")).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve)),
+            Row::new(l.pick(texts::local::USB_DRIVE)).icon(PURPLE, Icon::UsbDrive),
+            Row::new(l.pick(texts::local::WIRELESS_TRANSFER)).icon(BLUE, Icon::Wlan).trail(Trail::Switch(s.file_serve)),
         ],
     );
     out.extend(hits(
@@ -394,11 +394,7 @@ pub fn settings(cx: &Ctx) -> Frame {
         &[Action::Toggle(Switch::FileTransfer), Action::Open(Screen::Choose(Place::UsbDrive)), Action::Toggle(Switch::FileServe)],
     ));
     y = widgets::footnote(&mut c, t, f, usb.bottom, l.pick(texts::settings::FILE_TRANSFER_NOTE));
-    let note = l.among(
-        "无线传输先要连上 Wi-Fi 并完成解密；开启后地址会以通知显示，电脑在同一网络用浏览器打开即可。",
-        "無線傳輸先要連上 Wi-Fi 並完成解密；開啟後位址會以通知顯示，電腦在同一網路用瀏覽器開啟即可。",
-        "Wireless transfer needs Wi-Fi and an open storage; the address shows as a notification, and a computer on the same network opens it in a browser.",
-    );
+    let note = l.pick(texts::local::WIRELESS_NOTE);
     y = widgets::footnote(&mut c, t, f, y, note);
     y = widgets::section(&mut c, t, f, y, l.pick(texts::settings::DEBUGGING));
     let debug = widgets::list(
@@ -408,7 +404,7 @@ pub fn settings(cx: &Ctx) -> Frame {
         y,
         &[
             Row::new(l.pick(texts::page::TERMINAL)).icon(SLATE, Icon::Terminal),
-            Row::new(l.among("AVB 校验", "AVB 校驗", "AVB checks")).icon(SLATE, Icon::Shield),
+            Row::new(l.pick(texts::local::AVB_CHECKS)).icon(SLATE, Icon::Shield),
         ],
     );
     out.extend(hits(&debug.rows, &[Action::Open(Screen::Terminal), Action::Open(Screen::Avb)]));
@@ -466,18 +462,13 @@ pub fn time_format(cx: &Ctx) -> Frame {
     let mut c = page(cx);
     let top = t.m.content_top;
     let rows = [
-        Row::new(l.among("24 小时制", "24 小時制", "24-hour")).trail(Trail::Check(!s.hour12)),
-        Row::new(l.among("12 小时制", "12 小時制", "12-hour")).trail(Trail::Check(s.hour12)),
+        Row::new(l.pick(texts::local::HOUR24)).trail(Trail::Check(!s.hour12)),
+        Row::new(l.pick(texts::local::HOUR12)).trail(Trail::Check(s.hour12)),
     ];
     let list = widgets::list(&mut c, t, f, top, &rows);
-    let note = l.among(
-        "状态栏与息屏时的时钟都按此格式显示。",
-        "狀態列與息屏時的時鐘都按此格式顯示。",
-        "The status bar and the always-on clock both tell the time this way.",
-    );
-    let y = widgets::footnote(&mut c, t, f, list.bottom, note);
+    let y = widgets::footnote(&mut c, t, f, list.bottom, l.pick(texts::local::TIME_FORMAT_NOTE));
     let picks = [Action::Hour12(false), Action::Hour12(true)];
-    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.among("时间格式", "時間格式", "Time format"), top)
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(texts::local::TIME_FORMAT), top)
 }
 
 /// The date the charging screen shows, with the lunar date or without.
@@ -487,10 +478,10 @@ pub fn aod_date_page(cx: &Ctx) -> Frame {
     let top = t.m.content_top;
     let rows: Vec<Row> = (0..AOD_DATES.len()).map(|k| Row::new(fmt::aod_date_name(l, k)).trail(Trail::Check(s.aod_date == k))).collect();
     let list = widgets::list(&mut c, t, f, top, &rows);
-    let note = l.among("只在插上充电线后的息屏画面上显示。", "只在插上充電線後的息屏畫面上顯示。", "Shown on the always-on screen that comes up with a cable.");
+    let note = l.pick(texts::local::AOD_DATE_NOTE);
     let y = widgets::footnote(&mut c, t, f, list.bottom, note);
     let picks: Vec<Action> = (0..AOD_DATES.len()).map(Action::AodDate).collect();
-    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.among("息屏日期", "息屏日期", "Always-on date"), top)
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(texts::local::ALWAYS_ON_DATE), top)
 }
 
 /// How the file manager orders the entries of a folder.
@@ -499,14 +490,10 @@ pub fn file_sort_page(cx: &Ctx) -> Frame {    let (t, f, s, l) = (cx.t, cx.f, cx
     let top = t.m.content_top;
     let rows: Vec<Row> = SORT_KEYS.iter().map(|&k| Row::new(fmt::sort_name(l, k)).trail(Trail::Check(s.sort == k))).collect();
     let list = widgets::list(&mut c, t, f, top, &rows);
-    let note = l.among(
-        "文件夹始终排在前面；同一类里按这里的选择排序。",
-        "資料夾始終排在前面；同一類裡按這裡的選擇排序。",
-        "Folders stay first; within a kind, the choice here orders the list.",
-    );
+    let note = l.pick(texts::local::SORT_NOTE);
     let y = widgets::footnote(&mut c, t, f, list.bottom, note);
     let picks: Vec<Action> = (0..SORT_KEYS.len()).map(Action::SortKey).collect();
-    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.among("文件排序", "檔案排序", "File sorting"), top)
+    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(texts::local::FILE_SORTING), top)
 }
 
 /// The vbmeta flags of the slot: dm-verity, the bootloader's verification,
@@ -517,21 +504,21 @@ pub fn avb_page(cx: &Ctx) -> Frame {
     let top = t.m.content_top;
     let mut out = Vec::new();
     let status = match &s.avb {
-        None => l.among("正在读取 vbmeta…", "正在讀取 vbmeta…", "Reading vbmeta…").to_string(),
-        Some(Err(e)) => format!("{}：{e}", l.among("读取失败", "讀取失敗", "Could not read")),
+        None => l.pick(texts::local::AVB_READING).to_string(),
+        Some(Err(e)) => format!("{}: {e}", l.pick(texts::local::AVB_READ_FAILED)),
         Some(Ok(st)) => format!(
             "{}  ·  {}  ·  verity {}  verification {}",
             st.partition,
-            if st.unlocked { l.among("已解锁", "已解鎖", "unlocked") } else { l.among("已锁定", "已鎖定", "locked") },
-            if st.verity { "on" } else { "off" },
-            if st.verification { "on" } else { "off" }
+            if st.unlocked { l.pick(texts::local::AVB_UNLOCKED) } else { l.pick(texts::local::AVB_LOCKED) },
+            if st.verity { l.pick(texts::local::AVB_ON) } else { l.pick(texts::local::AVB_OFF) },
+            if st.verification { l.pick(texts::local::AVB_ON) } else { l.pick(texts::local::AVB_OFF) }
         ),
     };
     let facts = widgets::list(&mut c, t, f, top, &[Row::new(status.as_str())]);
     let mut y = facts.bottom + t.m.dp(10.0);
     let rows = [
         Row::new("dm-verity").trail(Trail::Switch(s.avb_verity)),
-        Row::new(l.among("boot 校验", "boot 校驗", "Boot verification")).trail(Trail::Switch(s.avb_verification)),
+        Row::new(l.pick(texts::local::AVB_BOOT_VERIFICATION)).trail(Trail::Switch(s.avb_verification)),
     ];
     let switches = widgets::list(&mut c, t, f, y, &rows);
     out.extend(hits(&switches.rows, &[Action::Toggle(Switch::AvbVerity), Action::Toggle(Switch::AvbVerification)]));
@@ -548,13 +535,9 @@ pub fn avb_page(cx: &Ctx) -> Frame {
         let note = widgets::footnote(&mut c, t, f, y, said);
         y = note;
     }
-    let note = l.among(
-        "只改 vbmeta 头里的标志位，需要已解锁的 bootloader；写入会同时作用到两个槽。",
-        "只改 vbmeta 頭裡的標誌位，需要已解鎖的 bootloader；寫入會同時作用到兩個槽。",
-        "Only the flags in the vbmeta header change; the bootloader must be unlocked. Both slots are written.",
-    );
+    let note = l.pick(texts::local::AVB_NOTE);
     let y = widgets::footnote(&mut c, t, f, y, note);
-    Frame::new(t, fit(c, t, y), out, l.among("AVB", "AVB", "AVB"), top)
+    Frame::new(t, fit(c, t, y), out, "AVB", top)
 }
 
 /// What flashing and decrypting have said, this phone's own details, and
@@ -574,10 +557,10 @@ pub fn output(cx: &Ctx) -> Frame {
         phone.push_str(&format!(" · {}", slot.letter()));
     }
     said.push(format!("# {phone}"));
-    said.push(format!("# {}: {}", l.among("data 分区", "data 分割區", "data partition"), fmt::data(l, &s.data)));
+    said.push(format!("# {}: {}", l.pick(texts::local::OUTPUT_DATA_PARTITION), fmt::data(l, &s.data)));
     said.push("-".repeat(44));
     if s.output.is_empty() {
-        said.push(l.among("暂无输出", "暫無輸出", "No output yet").to_string());
+        said.push(l.pick(texts::local::OUTPUT_EMPTY).to_string());
     } else {
         said.extend(s.output.iter().cloned());
     }
@@ -606,7 +589,7 @@ pub fn output(cx: &Ctx) -> Frame {
         let ink = if line.starts_with('!') { t.pal.danger } else if line.starts_with('#') || line.starts_with('-') { t.pal.subtitle } else { t.pal.text };
         c.text(face, line, x + m.inner, top + m.dp(12.0) + pitch * (k as f32 + 0.8), px, ink, Some(text_w));
     }
-    Frame::new(t, c, Vec::new(), l.among("输出", "輸出", "Output"), top)
+    Frame::new(t, c, Vec::new(), l.pick(texts::local::OUTPUT_TITLE), top)
 }
 
 /// Mount manager: the slot's partitions, each with a switch to mount it
@@ -731,11 +714,11 @@ fn about_cards(cx: &Ctx, c: &mut Canvas) -> (Vec<Hit>, f32, f32) {
     let y = widgets::spec_card(c, t, f, summary.bottom + m.card_gap, &fmt::model_lines(&i.model), &specs, &tone);
     let links = widgets::list_toned(c, t, f, y + m.card_gap, &[Row::new(l.pick(texts::page::SPECS)), Row::new(l.pick(texts::page::LOGS))], &tone);
     out.extend(hits(&links.rows, &[Action::Open(Screen::Specs), Action::Open(Screen::Logs)]));
-    let y = widgets::section(c, t, f, links.bottom, l.among("编译信息", "編譯資訊", "Build"));
+    let y = widgets::section(c, t, f, links.bottom, l.pick(texts::local::BUILD_INFO));
     let build = widgets::info_card(c, t, f, y, &[
-        (l.among("编译设备", "編譯裝置", "Built for"), i.model.clone()),
-        (l.among("编译时间", "編譯時間", "Built at"), env!("SKYWARD_BUILD_TIME").to_string()),
-        (l.among("编译者", "編譯者", "Built by"), env!("SKYWARD_BUILD_BY").to_string()),
+        (l.pick(texts::local::BUILT_FOR), i.model.clone()),
+        (l.pick(texts::local::BUILT_AT), env!("SKYWARD_BUILD_TIME").to_string()),
+        (l.pick(texts::local::BUILT_BY), env!("SKYWARD_BUILD_BY").to_string()),
     ]);
     (out, summary.rows[0].y, build)
 }
@@ -953,9 +936,9 @@ fn code(cx: &Ctx, mut c: Canvas, user: u32, keys: Keys, checking: bool) -> Frame
     // keys are up or folded away; touching it brings them back.
     if keys != Keys::Pattern {
         let placeholder = if s.keys_hidden {
-            l.among("点按输入密码", "點按輸入密碼", "Tap to type")
+            l.pick(texts::local::TAP_TO_TYPE)
         } else {
-            l.among("输入密码", "輸入密碼", "Enter the code")
+            l.pick(texts::local::ENTER_CODE)
         };
         let r = code_field(&mut c, t, f, field_top, s.code.chars().count(), placeholder);
         if keys == Keys::Letters && s.keys_hidden && !checking {
@@ -1106,9 +1089,11 @@ pub fn install(cx: &Ctx) -> Frame {
     let y = widgets::footnote(&mut c, t, f, methods.bottom, what);
     let y = widgets::section(&mut c, t, f, y, l.pick(texts::common::OPTIONS));
     let check = Row::new(l.pick(texts::install::VERIFY_SIGNATURES)).trail(Trail::Switch(cx.state.check_signature));
-    let signature = widgets::list(&mut c, t, f, y, &[check]);
-    out.extend(hits(&signature.rows, &[Action::Toggle(Switch::Signature)]));
+    let merge = Row::new(l.pick(texts::local::MERGE_AFTER)).trail(Trail::Switch(cx.state.merge_after));
+    let signature = widgets::list(&mut c, t, f, y, &[check, merge]);
+    out.extend(hits(&signature.rows, &[Action::Toggle(Switch::Signature), Action::Toggle(Switch::MergeAfter)]));
     let mut y = widgets::footnote(&mut c, t, f, signature.bottom, l.pick(texts::install::VERIFY_SIGNATURES_NOTE));
+    y = widgets::footnote(&mut c, t, f, y, l.pick(texts::local::MERGE_NOTE));
     if cx.state.recovery_partitions {
         let row = Row::new(l.pick(texts::install::FLASH_SKYWARD_AGAIN)).trail(Trail::Switch(cx.state.keep_recovery));
         let options = widgets::list(&mut c, t, f, y + t.m.card_gap, &[row]);

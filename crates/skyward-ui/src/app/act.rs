@@ -17,7 +17,7 @@ impl App {
     /// flags again where it went.
     pub fn avb_changed(&mut self, result: Result<AvbStatus, String>, now: u64) {
         match &result {
-            Ok(_) => self.state.avb_notice = Some(self.state.lang.among("已写入。", "已寫入。", "Written.").to_string()),
+            Ok(_) => self.state.avb_notice = Some(self.state.lang.pick(texts::local::AVB_WRITTEN).to_string()),
             Err(why) => self.state.avb_notice = Some(why.clone()),
         }
         self.set_avb(result);
@@ -82,6 +82,7 @@ impl App {
                     Switch::Vibrate => &mut self.state.vibrate,
                     Switch::FileTransfer => &mut self.state.file_transfer,
                     Switch::FileServe => &mut self.state.file_serve,
+                    Switch::MergeAfter => &mut self.state.merge_after,
                     Switch::Compress => &mut self.state.compress,
                     Switch::Verify => &mut self.state.verify,
                     Switch::Signature => &mut self.state.check_signature,
@@ -831,10 +832,7 @@ impl App {
                 if unlocked {
                     fx.push(Effect::SetAvb { verity: self.state.avb_verity, verification: self.state.avb_verification });
                 } else {
-                    let why = self
-                        .state
-                        .lang
-                        .among("bootloader 未解锁，不能写 vbmeta。", "bootloader 未解鎖，不能寫 vbmeta。", "The bootloader is locked; vbmeta is not written.");
+                    let why = l.pick(texts::local::AVB_LOCKED_REFUSAL);
                     self.state.avb_notice = Some(why.to_string());
                     self.refresh();
                 }

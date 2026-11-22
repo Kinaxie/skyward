@@ -1148,6 +1148,27 @@ pub fn screenshot_name(unix_ms: i64, zone: usize) -> String {
 pub const TERMINAL_BUSY: Text = texts::terminal::BUSY;
 
 
+/// What the decrypt page says when the key service turned a credential
+/// down: the two refusals a user can act on in their own words, and any
+/// other fault as the key service put it.
+pub fn unlock_refusal(l: Lang, why: &str) -> String {
+    if why.contains("does not recognise that credential") || why.contains("incorrect credential") {
+        return l.pick(texts::local::UNLOCK_INCORRECT).to_string();
+    }
+    if why.contains("holding off further tries") || why.contains("holds off further tries") {
+        let seconds = why
+            .split("another ")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .filter(|n| n.chars().all(|c| c.is_ascii_digit()));
+        return match seconds {
+            Some(seconds) => texts::local::unlock_wait(l, seconds),
+            None => l.pick(texts::local::UNLOCK_WAIT_ANY).to_string(),
+        };
+    }
+    why.to_string()
+}
+
 /// The clock as the pages tell it: in twelve hours when asked, without
 /// the half of the day beside it.
 pub fn clock_shown(clock: &str, hour12: bool) -> String {
@@ -1163,26 +1184,26 @@ pub fn clock_shown(clock: &str, hour12: bool) -> String {
 pub fn period(clock: &str, l: Lang) -> &'static str {
     let hour = clock.split_once(':').and_then(|(h, _)| h.parse::<u32>().ok()).unwrap_or(0);
     match hour < 12 {
-        true => l.among("上午", "上午", "AM"),
-        false => l.among("下午", "下午", "PM"),
+        true => l.pick(texts::local::AM),
+        false => l.pick(texts::local::PM),
     }
 }
 
 /// The name of a clock's format, twelve hours or twenty-four.
 pub fn hour12_name(l: Lang, on: bool) -> &'static str {
     match on {
-        true => l.among("12 小时制", "12 小時制", "12-hour"),
-        false => l.among("24 小时制", "24 小時制", "24-hour"),
+        true => l.pick(texts::local::HOUR12),
+        false => l.pick(texts::local::HOUR24),
     }
 }
 
 /// What the file sort page calls the order `key` puts the files in.
 pub fn sort_name(l: Lang, key: SortKey) -> &'static str {
     match key {
-        SortKey::AsListed => l.among("默认顺序", "預設順序", "As listed"),
-        SortKey::Name => l.among("名称", "名稱", "Name"),
-        SortKey::Size => l.among("大小", "大小", "Size"),
-        SortKey::Modified => l.among("修改时间", "修改時間", "Modified"),
+        SortKey::AsListed => l.pick(texts::local::SORT_AS_LISTED),
+        SortKey::Name => l.pick(texts::local::SORT_NAME),
+        SortKey::Size => l.pick(texts::local::SORT_SIZE),
+        SortKey::Modified => l.pick(texts::local::SORT_MODIFIED),
     }
 }
 
@@ -1190,9 +1211,9 @@ pub fn sort_name(l: Lang, key: SortKey) -> &'static str {
 /// [`crate::app::AOD_DATES`].
 pub fn aod_date_name(l: Lang, at: usize) -> &'static str {
     match at {
-        1 => l.among("完整日期", "完整日期", "The whole date"),
-        2 => l.among("不显示日期", "不顯示日期", "No date"),
-        _ => l.among("月日、星期与农历", "月日、星期與農曆", "Month, day, weekday and lunar"),
+        1 => l.pick(texts::local::DATE_WHOLE),
+        2 => l.pick(texts::local::DATE_NONE),
+        _ => l.pick(texts::local::DATE_LUNAR),
     }
 }
 
@@ -1204,29 +1225,28 @@ pub fn aod_date(l: Lang, unix: i64, zone: usize, at: usize) -> String {
     }
     let d = local(unix, zone);
     let weekday = match d.weekday() {
-        Weekday::Monday => l.among("周一", "週一", "Mon"),
-        Weekday::Tuesday => l.among("周二", "週二", "Tue"),
-        Weekday::Wednesday => l.among("周三", "週三", "Wed"),
-        Weekday::Thursday => l.among("周四", "週四", "Thu"),
-        Weekday::Friday => l.among("周五", "週五", "Fri"),
-        Weekday::Saturday => l.among("周六", "週六", "Sat"),
-        Weekday::Sunday => l.among("周日", "週日", "Sun"),
+        Weekday::Monday => l.pick(texts::local::WEEKDAY_MON),
+        Weekday::Tuesday => l.pick(texts::local::WEEKDAY_TUE),
+        Weekday::Wednesday => l.pick(texts::local::WEEKDAY_WED),
+        Weekday::Thursday => l.pick(texts::local::WEEKDAY_THU),
+        Weekday::Friday => l.pick(texts::local::WEEKDAY_FRI),
+        Weekday::Saturday => l.pick(texts::local::WEEKDAY_SAT),
+        Weekday::Sunday => l.pick(texts::local::WEEKDAY_SUN),
     };
-    let (year, month, day) = (d.year(), d.month(), d.day());
-    let chinese = l.among(true, true, false);
-    if !chinese {
-        const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        let month = MONTHS[(month - 1) as usize];
-        return match at {
-            1 => format!("{month} {day}, {year}, {weekday}"),
-            _ => format!("{month} {day}, {weekday}"),
-        };
-    }
-    let whole = if at == 1 { format!("{year}年") } else { String::new() };
-    let lunar = if at == 0 { crate::lunar::text(year.into(), month as u32, day as u32, l == Lang::Hant) } else { None };
+    let (year, month, day_of_month) = (d.year(), d.month(), d.day());
+    let date = if at == 1 {
+        day(l, year.into(), month.into(), day_of_month.into())
+    } else {
+        texts::local::month_day(l, l.pick(MONTHS[(month - 1) as usize]), day_of_month)
+    };
+    let lunar = if at == 0 && matches!(l, Lang::Hans | Lang::Hant) {
+        crate::lunar::text(year.into(), month as u32, day_of_month as u32, l == Lang::Hant)
+    } else {
+        None
+    };
     match lunar {
-        Some(lunar) => format!("{whole}{month}月{day}日{weekday} {lunar}"),
-        None => format!("{whole}{month}月{day}日{weekday}"),
+        Some(lunar) => format!("{date} {weekday} {lunar}"),
+        None => format!("{date} {weekday}"),
     }
 }
 

@@ -44,6 +44,9 @@ pub struct State {
     pub file_transfer: bool,
     /// The owner's shared storage is served over the WLAN, read-only.
     pub file_serve: bool,
+    /// An update applied from the install page is merged there and then,
+    /// rather than left for the system to merge after its first start.
+    pub merge_after: bool,
     pub reboot: usize,
     /// What the wipe page has chosen, by place in [`WIPES`].
     pub wipe: [bool; WIPES.len()],
@@ -232,6 +235,7 @@ impl Default for State {
             vibration: SLIDER_START,
             file_transfer: true,
             file_serve: false,
+            merge_after: true,
             reboot: 0,
             wipe: [false; WIPES.len()],
             cache_partition: false,

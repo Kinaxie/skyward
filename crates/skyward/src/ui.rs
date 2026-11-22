@@ -900,25 +900,6 @@ fn ready_apps() {
 /// What the decrypt page says when the key service turned a credential
 /// down: the two refusals a user can act on in their own words, and any
 /// other fault as the key service put it, for a log or a report.
-fn unlock_refusal(l: skyward_ui::Lang, why: &str) -> String {
-    if why.contains("does not recognise that credential") || why.contains("incorrect credential") {
-        return l.among("密码不正确，请重试。", "密碼不正確，請重試。", "Incorrect password; try again.").to_string();
-    }
-    if why.contains("holding off further tries") || why.contains("holds off further tries") {
-        let seconds = why
-            .split("another ")
-            .nth(1)
-            .and_then(|rest| rest.split_whitespace().next())
-            .filter(|n| n.chars().all(|c| c.is_ascii_digit()));
-        return match seconds {
-            Some(seconds) => l
-                .among("尝试次数过多，请 {seconds} 秒后再试。", "嘗試次數過多，請 {seconds} 秒後再試。", "Too many tries; wait {seconds} seconds.")
-                .replace("{seconds}", seconds),
-            None => l.among("尝试次数过多，请稍后再试。", "嘗試次數過多，請稍後再試。", "Too many tries; wait a while.").to_string(),
-        };
-    }
-    why.to_string()
-}
 
 /// Whether the phone is shut, as its inner touch panel's driver reports it
 /// from the fold sensor it follows: "capfold_status: 1" open, "0" shut.
@@ -2230,6 +2211,10 @@ impl Pages<'_> {
             let installed = matches!(ev, Told::Finished(Outcome::Installed { .. } | Outcome::Ran { .. }));
             let wipe_after = matches!(ev, Told::Finished(Outcome::Installed { wipe: true, .. }));
             let script_cache = matches!(ev, Told::Finished(Outcome::Ran { wipe_cache: true, .. }));
+            let merge_slot = match &ev {
+                Told::Finished(Outcome::Installed { slot, .. }) => Some(*slot),
+                _ => None,
+            };
             // A second system installed is read for the pages to show.
             if matches!(ev, Told::Done(Outcome::SystemInstalled { .. }) | Told::Finished(Outcome::SystemInstalled { .. })) {
                 self.systems_worker.as_mut().context("a second system went in on a phone that cannot hold one")?.send(systems::Task::Read);
@@ -2282,6 +2267,19 @@ impl Pages<'_> {
                     self.erase_leaves = leaves;
                 } else if leaves {
                     self.leave_at = Some(now + LEAVE_AFTER_MS);
+                }
+                // An update installed from the pages is merged here and now,
+                // as the install page asks; one the system asked for leaves
+                // its merge to the system's first start.
+                if let Some(slot) = merge_slot
+                    && self.app.state.merge_after
+                    && !wipe_after
+                    && !leaves
+                    && self.merger.is_none()
+                {
+                    skyward_sys::kmsg(&format!("merging the update in slot {} after the install", slot.letter()))?;
+                    self.merger = Some(merge::Merger::start(slot, true)?);
+                    self.app.set_update(Standing::Merging(0.0));
                 }
                 // Rescue asked to come back is told so in misc, as
                 // Android's own recovery tells it.
@@ -2710,7 +2708,7 @@ impl Pages<'_> {
             }
             decrypt::Ended::Unlocked(Err(why)) => {
                 skyward_sys::kmsg(&format!("what was entered did not open the user's files: {why}"))?;
-                let said = unlock_refusal(self.app.state.lang, &why);
+                let said = skyward_ui::fmt::unlock_refusal(self.app.state.lang, &why);
                 self.app.unlock_failed(said, now);
             }
         }

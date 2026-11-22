@@ -18,6 +18,9 @@ pub enum Switch {
     FileTransfer,
     /// Serve the owner's shared storage over the WLAN, read-only.
     FileServe,
+    /// Merge an update right after the install, rather than after the
+    /// system's first start.
+    MergeAfter,
     /// Compress a backup.
     Compress,
     /// Read a backup back once it is written.
