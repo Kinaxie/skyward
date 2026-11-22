@@ -126,7 +126,7 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 小米 MIX Flip 2 | `bixi` | OS4.0.0.11.XOHCNXM（Android 17） |
 | 🚧 小米 MIX Flip | `ruyi` | OS3.0.305.0.WNIMIXM（Android 16） |
 
-`bixi` 和 `ruyi` 是折叠屏，配置里用 `[display] cover_display = true` 标记了外屏；当前 recovery 只驱动内屏，外屏支持尚未接入。
+`bixi` 和 `ruyi` 是折叠屏，配置里用 `[display] cover_display = true` 标记了外屏；合盖后页面切到外屏，开盖切回内屏。
 
 ## 安装 Skyward
 

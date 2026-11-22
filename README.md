@@ -139,7 +139,8 @@ not been verified.
 | 🚧 Xiaomi MIX Flip | `ruyi` | OS3.0.305.0.WNIMIXM (Android 16) |
 
 `bixi` and `ruyi` are foldables. Their configurations mark the outer panel with
-`[display] cover_display = true`; the recovery drives the inner panel only for now.
+`[display] cover_display = true`; the pages move to the cover when the phone is
+shut and back to the inner panel when it opens.
 
 ## Installing Skyward
 

@@ -1381,6 +1381,35 @@ impl App {
         self.corners = radius;
     }
 
+    /// Lay the pages out again for a screen of another size, so that the
+    /// same page shows on both the phone's own screen and, on a phone that
+    /// folds, its cover.
+    pub fn resize(&mut self, w: u32, h: u32, px_per_dp: f32) {
+        if (self.w, self.h, self.px_per_dp) == (w, h, px_per_dp) {
+            return;
+        }
+        self.w = w;
+        self.h = h;
+        self.px_per_dp = px_per_dp;
+        self.frame = None;
+        self.spots = None;
+        self.shown = None;
+        self.layer = None;
+        self.backdrop = None;
+        self.row_art = None;
+        self.charge_canvas = None;
+        self.titles = None;
+        self.search_words = None;
+        self.chip = None;
+        self.button_chip = None;
+        self.turn = None;
+        self.drawn.clear();
+        self.spare.clear();
+        self.stale.clear();
+        self.cols = 0;
+        self.dirty = true;
+    }
+
     pub fn theme(&self) -> Theme {
         if self.state.dark {
             Theme::dark(self.w, self.h, self.px_per_dp)

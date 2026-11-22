@@ -91,6 +91,11 @@ struct Backlight {
 
 impl Backlight {
     fn open() -> Result<Self> {
+        Self::open_named("panel0-backlight", "dsi_display0")
+    }
+
+    /// The panel's own backlight, named for a phone with a second panel.
+    fn open_named(name: &str, display: &str) -> Result<Self> {
         let mut dirs: Vec<PathBuf> = fs::read_dir("/sys/class/backlight")
             .context("read /sys/class/backlight")?
             .map(|e| e.map(|e| e.path()))
@@ -99,7 +104,7 @@ impl Backlight {
         // Qualcomm panels expose panel0-backlight; take it when present.
         let dir = dirs
             .iter()
-            .find(|d| d.file_name().is_some_and(|n| n == "panel0-backlight"))
+            .find(|d| d.file_name().is_some_and(|n| n == name))
             .or(dirs.first())
             .ok_or_else(|| anyhow!("no backlight device"))?
             .clone();
@@ -110,7 +115,7 @@ impl Backlight {
                 .parse()
                 .with_context(|| format!("parse {name}"))
         };
-        let top = normal_max(read("max_brightness")?)?;
+        let top = normal_max(read("max_brightness")?, display)?;
         let level = read("brightness")?;
         Ok(Backlight { path: dir.join("brightness"), top, level })
     }
@@ -147,9 +152,9 @@ const NORMAL_MAX: [(&str, &str); 3] = [
 /// Above it the panel runs in high brightness mode, which the stock system
 /// keeps for strong sunlight and its slider does not reach. The panel the
 /// display driver booted with gives that maximum in the device tree.
-fn normal_max(max: u32) -> Result<u32> {
-    let param = "/sys/module/msm_drm/parameters/dsi_display0";
-    let boot = fs::read_to_string(param).with_context(|| format!("read {param}"))?;
+fn normal_max(max: u32, display: &str) -> Result<u32> {
+    let param = format!("/sys/module/msm_drm/parameters/{display}");
+    let boot = fs::read_to_string(&param).with_context(|| format!("read {param}"))?;
     // The panel's node, then its configuration after a colon, as in
     // "qcom,mdss_dsi_m1_42_02_0a_dsc_cmd:"; the driver takes no name
     // without the colon either.
@@ -915,6 +920,49 @@ fn unlock_refusal(l: skyward_ui::Lang, why: &str) -> String {
     why.to_string()
 }
 
+/// Whether the phone is shut, as its inner touch panel's driver reports it
+/// from the fold sensor it follows: "capfold_status: 1" open, "0" shut.
+fn shut_now() -> Option<bool> {
+    let nodes = fs::read_dir("/sys/devices/platform").ok()?;
+    for node in nodes.flatten() {
+        let name = node.file_name();
+        if !name.to_string_lossy().starts_with("synaptics_tcm") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(node.path().join("synaptics_tcm/capfold_status")) else { continue };
+        let Some(last) = text.split_whitespace().last() else { continue };
+        return Some(last.trim_end_matches(',') == "0");
+    }
+    None
+}
+
+/// Hand the cover screen's digitizer to the kernel once its panel is lit.
+/// Started while the inner panel is still on, the driver takes the panel
+/// going dark as a suspend of its own and leaves the controller in gesture
+/// mode; starting it on the closed phone leaves it in the state the open one
+/// would give it.
+fn load_cover_touch(cfg: &DeviceConfig) -> Result<()> {
+    if Path::new("/sys/module/goodix_core").is_dir() {
+        return Ok(());
+    }
+    let dirs = cfg.modules.sources.iter().map(|s| skyward_modules::source_dir(s)).collect::<Result<Vec<_>>>()?;
+    for path in skyward_modules::load(&dirs, &["goodix_core".to_string()])? {
+        skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Hand the digitizer back as the phone opens, so that shutting it again
+/// starts the driver afresh instead of on top of the controller the closed
+/// phone left in gesture mode.
+fn unload_cover_touch() {
+    let Ok(name) = std::ffi::CString::new("goodix_core") else { return };
+    let rc = unsafe { libc::syscall(libc::SYS_delete_module, name.as_ptr(), 0 as libc::c_uint) };
+    if rc != 0 {
+        let _ = skyward_sys::kmsg("the cover digitizer stays loaded");
+    }
+}
+
 /// Show what the data partition still keeps closed: the first user whose
 /// own files wait on a screen lock they set themselves, with the control
 /// that lock is answered with, or nothing. Users whose credential the phone
@@ -1218,6 +1266,16 @@ struct Pages<'a> {
     control: Option<Control>,
     haptics: Option<Haptics>,
     backlight: Backlight,
+    /// The cover screen's backlight, opened once; while the cover is shown it
+    /// is the active backlight.
+    cover_light: Option<Backlight>,
+    /// The phone's own surface, frame and backlight while the cover is shown.
+    inner: Option<(KmsSurface, Canvas, Backlight)>,
+    cover_shut: bool,
+    cover_broken: bool,
+    /// 0 while the phone's own screen shows the pages, 1 while the cover
+    /// does.
+    screen_which: usize,
     keeper: Keeper,
     shown_clock: String,
     /// The page shown first, until it has been told it shows.
@@ -1359,6 +1417,17 @@ impl<'a> Pages<'a> {
         let control = Control::open()?;
         let haptics = cfg.haptics.as_ref().map(Haptics::open).transpose()?;
         let backlight = Backlight::open()?;
+        let cover_light = if cfg.display.cover_display {
+            match Backlight::open_named("panel1-backlight", "dsi_display1") {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    skyward_sys::kmsg(&format!("the cover screen has no backlight: {e:#}"))?;
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let first = match &request.work {
             Work::Fastboot => Screen::Fastboot,
             Work::PromptWipeData => Screen::CantStart,
@@ -1483,6 +1552,11 @@ impl<'a> Pages<'a> {
             control,
             haptics,
             backlight,
+            cover_light,
+            inner: None,
+            cover_shut: false,
+            cover_broken: false,
+            screen_which: 0,
             keeper,
             shown_clock: String::new(),
             arriving: Some(Incoming::Arrived),
@@ -1675,6 +1749,7 @@ impl<'a> Pages<'a> {
             }
         }
         self.tick(now)?;
+        self.switch_screens()?;
         self.take_readings(now)?;
         // In fastboot the page follows fastbootd and the cable each second.
         if self.fastboot && self.port_at.elapsed().as_secs() >= 1 {
@@ -1746,6 +1821,88 @@ impl<'a> Pages<'a> {
         skyward_sys::kmsg(&format!("vbmeta flags written on both slots: verity={verity}, verification={verification}"))
             .map_err(|e| format!("{e:#}"))?;
         self.avb_status()
+    }
+
+    /// Move the pages between the phone's own screen and the cover when the
+    /// phone is shut or opened. Only one panel is driven at a time: the
+    /// display processor will not take both.
+    fn switch_screens(&mut self) -> Result<()> {
+        if !self.cfg.display.cover_display {
+            return Ok(());
+        }
+        let Some(shut) = shut_now() else { return Ok(()) };
+        if shut == self.cover_shut {
+            return Ok(());
+        }
+        if shut {
+            if self.cover_broken {
+                return Ok(());
+            }
+            self.backlight.show(None)?;
+            self.surface.turn_off()?;
+            self.surface.settle()?;
+            let Some(light) = self.cover_light.take() else {
+                let _ = skyward_sys::kmsg("the cover screen has no backlight, so the cover is not driven");
+                self.cover_broken = true;
+                return Ok(());
+            };
+            let mut refused = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                match self.surface.open_again(1) {
+                    Ok(cover) => {
+                        let (cw, ch) = cover.size();
+                        if let Err(e) = load_cover_touch(self.cfg) {
+                            let _ = skyward_sys::kmsg(&format!("the cover digitizer is not loaded: {e:#}"));
+                        }
+                        self.inputs.cover_size(cw, ch);
+                        let inner_surface = std::mem::replace(&mut self.surface, cover);
+                        let inner_screen = std::mem::replace(&mut self.screen, Canvas::new(cw, ch));
+                        let inner_light = std::mem::replace(&mut self.backlight, light);
+                        self.inner = Some((inner_surface, inner_screen, inner_light));
+                        self.cover_shut = true;
+                        self.cover_broken = false;
+                        self.screen_which = 1;
+                        self.blanked = false;
+                        self.rested_at = None;
+                        let scale = self.cfg.display.density as f32 / 160.0;
+                        self.app.resize(cw, ch, scale);
+                        self.app.refresh();
+                        return Ok(());
+                    }
+                    Err(e) => refused = Some(e),
+                }
+            }
+            if let Some(e) = refused {
+                let _ = skyward_sys::kmsg(&format!("the cover screen is not driven: {e:#}"));
+                self.cover_broken = true;
+            }
+            // The phone's own panel comes back with the next frame.
+            self.cover_light = Some(light);
+            return Ok(());
+        }
+        if let Some((surface, screen, light)) = self.inner.take() {
+            self.backlight.show(None)?;
+            self.surface.turn_off()?;
+            self.surface.settle()?;
+            unload_cover_touch();
+            self.inputs.cover_size(0, 0);
+            self.cover_light = Some(std::mem::replace(&mut self.backlight, light));
+            self.surface = surface;
+            self.screen = screen;
+            self.cover_shut = false;
+            self.cover_broken = false;
+            self.screen_which = 0;
+            self.blanked = false;
+            self.rested_at = None;
+            let (iw, ih) = self.surface.size();
+            let scale = self.cfg.display.density as f32 / 160.0;
+            self.app.resize(iw, ih, scale);
+            self.app.refresh();
+        }
+        Ok(())
     }
 
     /// Serve the owner's shared storage over the WLAN, once the network is
@@ -2658,7 +2815,13 @@ impl Pages<'_> {
                     skyward_sys::kmsg(&format!("asked on the recovery socket: {asked:?}"))?;
                     answer(asked, self.fastboot)
                 }
-                Incoming::Input(Event::Touch(t, at)) => self.app.touch(t, &self.fonts, at),
+                Incoming::Input(Event::Touch(t, at, which)) => {
+                    if which == self.screen_which {
+                        self.app.touch(t, &self.fonts, at)
+                    } else {
+                        Vec::new()
+                    }
+                }
                 Incoming::Input(Event::Key(k, true)) => self.app.key(k, now),
                 Incoming::Input(Event::Key(k, false)) => self.app.key_up(k, now),
                 Incoming::Input(Event::Wake) => self.app.gesture_wake(now),
