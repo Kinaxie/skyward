@@ -58,6 +58,14 @@ pub(super) fn spot(app: &mut App, f: &Fonts, i: &DeviceInfo, action: Action) -> 
         let (x, y) = h.rect.centre();
         return (x, y + H as f32 - d.canvas.h as f32);
     }
+    if let Some(i) = fr.tools.iter().position(|(_, a)| *a == action) {
+        return widgets::tool_rect(&t, i, fr.tools.len()).centre();
+    }
+    if let Some(d) = &fr.dialog
+        && let Some(h) = d.hits.iter().find(|h| h.action == action)
+    {
+        return h.rect.centre();
+    }
     let rows = fr.rows.as_ref().expect("control on the page");
     let answer = rows.action.expect("control on the page");
     let k = (0..rows.count()).find(|&k| answer(k) == action).expect("control on the page");

@@ -79,6 +79,20 @@ impl App {
                 } else {
                     None
                 };
+                // A dialog is above everything and takes every touch: what
+                // lies under it neither scrolls nor answers.
+                if self.state.new_folder {
+                    let action = self
+                        .frame
+                        .as_ref()
+                        .and_then(|fr| fr.dialog.as_ref())
+                        .and_then(|d| d.hits.iter().find(|h| h.rect.contains(x, y)).map(|h| h.action));
+                    if self.state.vibrate && matches!(action, Some(Action::Type(_))) {
+                        fx.push(Effect::Haptic);
+                    }
+                    self.drag = Drag::Modal { action };
+                    return fx;
+                }
                 // The first page has nothing to go back to: its edges are
                 // like the rest of it.
                 let at_edge = side.filter(|_| self.stack.len() > 1);
@@ -112,10 +126,18 @@ impl App {
                 let dock = self.frame.as_ref().and_then(|fr| fr.dock.as_ref()).map(|d| (d, self.h as f32 - d.canvas.h as f32));
                 let on_dock = dock.filter(|&(_, top)| y >= top);
                 let button = self.frame.as_ref().and_then(|fr| fr.button).map(|(_, a)| (a, widgets::button_rect(&t)));
+                let tool = self.frame.as_ref().and_then(|fr| {
+                    fr.tools.iter().enumerate().find_map(|(i, (_, action))| {
+                        let r = widgets::tool_rect(&t, i, fr.tools.len());
+                        r.contains(x, y).then_some((*action, r))
+                    })
+                });
                 let hit = if self.frame.as_ref().is_some_and(|fr| fr.back) && back.contains(x, y) {
                     Some((Action::Back, back))
                 } else if let Some(button) = button.filter(|(_, r)| r.contains(x, y)) {
                     Some(button)
+                } else if let Some(tool) = tool {
+                    Some(tool)
                 } else if let Some((d, top)) = on_dock {
                     d.hits.iter().find(|h| h.rect.contains(x, y - top)).map(|h| (h.action, Rect { y: h.rect.y + top, ..h.rect }))
                 } else if let Some((p, top)) = on_strip {
@@ -241,6 +263,7 @@ impl App {
                     self.tracker.add(now, y);
                     self.drag = self.scroll_history(last, y, carry, pitch);
                 }
+                Drag::Modal { action } => self.drag = Drag::Modal { action },
                 Drag::Waking => self.drag = Drag::Waking,
                 Drag::Held => self.drag = Drag::Held,
                 Drag::Idle => {}
@@ -302,6 +325,7 @@ impl App {
                     }
                 }
                 Drag::Pattern => fx.extend(self.drawn(now)),
+                Drag::Modal { action: Some(a) } => fx.extend(self.act(a, now)),
                 // Let go, the strength slider taps the motor as strongly as
                 // it was left at.
                 Drag::Slider(Slider::Vibration, _) if self.state.vibrate => fx.push(Effect::Haptic),
@@ -315,6 +339,7 @@ impl App {
         // the page, shows held down while the finger rests on it.
         let held = match self.drag {
             Drag::Press { action: Some(a @ (Action::Type(_) | Action::PickSecurity(_))), .. } => Some(a),
+            Drag::Modal { action: Some(a @ Action::Type(_)) } => Some(a),
             _ => None,
         };
         if held != self.state.held {

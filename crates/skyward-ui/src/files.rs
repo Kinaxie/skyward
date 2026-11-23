@@ -1,10 +1,11 @@
-use crate::app::{Action, FileKind, FileRow, Hit, Pinned, Rows};
+use crate::app::{Action, Dialog, FileKind, FileRow, Hit, Pinned, Rows, Screen};
 use crate::canvas::Canvas;
 use crate::color::{mix, Rgba};
 use crate::fmt;
 use crate::font::{Face, Fonts};
 use crate::geom::Rect;
 use crate::lang::Lang;
+use crate::texts;
 use crate::theme::Theme;
 use crate::widgets;
 use std::f32::consts::FRAC_PI_2;
@@ -16,7 +17,7 @@ use std::path::{Component, Path};
 
 /// Where the path strip starts on an unscrolled page; scrolled up to the
 /// bar, it stays right under it.
-pub const STRIP_TOP_DP: f32 = 164.0;
+pub const STRIP_TOP_DP: f32 = 145.0;
 const STRIP_DP: f32 = 51.0;
 const PILL_TOP_DP: f32 = 13.0;
 const PILL_DP: f32 = 33.0;
@@ -25,8 +26,12 @@ const PILL_TEXT_DP: f32 = 10.9;
 /// Space either side of the arrow between two capsules.
 const ARROW_GAP_DP: f32 = 6.0;
 const ARROW_DP: f32 = 14.0;
+/// Where the search field and the order button stand, and where the rows
+/// start under them.
+pub const SEARCH_TOP_DP: f32 = STRIP_TOP_DP + STRIP_DP + 8.0;
+pub const SEARCHED_ROWS_TOP_DP: f32 = SEARCH_TOP_DP + 52.0;
 /// Where the first row starts on an unscrolled page.
-pub const ROWS_TOP_DP: f32 = 223.7;
+pub const ROWS_TOP_DP: f32 = 188.0;
 const ROW_DP: f32 = 72.0;
 /// What a second line of name adds to a row.
 const NAME_LINE_DP: f32 = 22.33;
@@ -97,7 +102,7 @@ pub fn page(t: &Theme) -> Rgba {
 }
 
 /// What a file holds, as its icon shows it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FileType {
     Archive,
     /// A partition's image, as a recovery installs it.
@@ -208,9 +213,32 @@ fn middle(c: &Canvas, face: &Face, px: f32, text: &str, w: f32) -> String {
 /// page puts it, each touched for `action`; a row grows by a line for a
 /// name on two.
 pub fn rows(t: &Theme, f: &Fonts, entries: &[FileRow], action: fn(usize) -> Action) -> Rows {
+    rows_from(t, f, entries, action, ROWS_TOP_DP)
+}
+
+/// [`rows`], with the first row at `top` dp instead of where a page without
+/// the search field puts it.
+pub fn rows_from(
+    t: &Theme,
+    f: &Fonts,
+    entries: &[FileRow],
+    action: fn(usize) -> Action,
+    top: f32,
+) -> Rows {
+    rows_at(t, f, entries, action, t.m.dp(top))
+}
+
+/// [`rows`], with the first row at `top` pixels.
+pub fn rows_at(
+    t: &Theme,
+    f: &Fonts,
+    entries: &[FileRow],
+    action: fn(usize) -> Action,
+    top: f32,
+) -> Rows {
     let m = &t.m;
     let w = name_width(t);
-    let mut y = m.dp(ROWS_TOP_DP).round();
+    let mut y = top.round();
     let mut edges = Vec::with_capacity(entries.len() + 1);
     edges.push(y);
     for e in entries {
@@ -440,7 +468,7 @@ fn arrow(c: &mut Canvas, t: &Theme, x: f32, cy: f32, color: Rgba) {
 /// `top`, and the folder shown last in amber; each earlier one goes up to
 /// its folder. A path longer than the strip shows its end, as the stock
 /// strip does scrolled to it.
-pub fn strip(t: &Theme, f: &Fonts, top: &str, folder: &str) -> Pinned {
+pub fn strip(t: &Theme, f: &Fonts, top: &str, folder: &str, skip: usize) -> Pinned {
     let m = &t.m;
     let p = palette(t);
     let mut c = Canvas::new(m.w, m.dp(STRIP_DP).round() as u32);
@@ -449,7 +477,7 @@ pub fn strip(t: &Theme, f: &Fonts, top: &str, folder: &str) -> Pinned {
         Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
         _ => None,
     });
-    let names: Vec<String> = std::iter::once(top.to_string()).chain(below).collect();
+    let names: Vec<String> = std::iter::once(top.to_string()).chain(below.skip(skip)).collect();
     let px = m.dp(PILL_TEXT_DP);
     let widths: Vec<f32> = names.iter().map(|n| c.text_width(&f.value, n, px) + m.dp(PILL_PAD_DP) * 2.0).collect();
     let step = m.dp(ARROW_GAP_DP) * 2.0 + m.dp(ARROW_DP);
@@ -462,13 +490,160 @@ pub fn strip(t: &Theme, f: &Fonts, top: &str, folder: &str) -> Pinned {
         let (fill, ink) = if here { (p.here, p.here_text) } else { (p.pill, p.pill_text) };
         c.fill_round_rect(x, top, w, h, h / 2.0, fill);
         c.text_center(&f.value, name, x + w / 2.0, top + h / 2.0, px, ink);
-        if !here {
-            hits.push(Hit { rect: Rect::new(x, top, w, h), action: Action::OpenAncestor(k) });
-            arrow(&mut c, t, x + w + m.dp(ARROW_GAP_DP), top + h / 2.0, p.arrow);
+        if here || (k == 0 && skip > 0) {
+            hits.push(Hit {
+                rect: Rect::new(x, top, w, h),
+                action: Action::Open(Screen::Places),
+            });
+        } else {
+            hits.push(Hit { rect: Rect::new(x, top, w, h), action: Action::OpenAncestor(k + skip.saturating_sub(1)) });
         }
+        arrow(&mut c, t, x + w + m.dp(ARROW_GAP_DP), top + h / 2.0, p.arrow);
         x += w + step;
     }
     Pinned { canvas: c, top: m.dp(STRIP_TOP_DP), hits }
+}
+
+/// How wide the new-folder dialog's card is at most, and how tall it is.
+const DIALOG_MAX_W_DP: f32 = 420.0;
+const DIALOG_H_DP: f32 = 218.0;
+
+/// The new-folder dialog over the file manager: the page under it dimmed,
+/// a card centred above the keys, and the keys at the foot. It answers
+/// touches in the page's own coordinates.
+#[allow(clippy::too_many_arguments)]
+pub fn new_folder_dialog(
+    t: &Theme,
+    f: &Fonts,
+    l: Lang,
+    layer: widgets::Layer,
+    pressed: Option<widgets::Cap>,
+    rise: f32,
+    closing: bool,
+    selected: bool,
+    text: &str,
+) -> (Dialog, widgets::Caret) {
+    let m = &t.m;
+    let screen_w = m.w as f32;
+    let screen_h = m.h as f32;
+    let rise = rise.max(0.0);
+    let fade = if closing {
+        (1.0 - ((rise - 800.0) / 200.0).clamp(0.0, 1.0)).max(0.0)
+    } else {
+        (1.0 - rise / 1000.0).clamp(0.0, 1.0)
+    };
+    let mut c = Canvas::new(m.w, m.h);
+    c.fill_rect(0.0, 0.0, screen_w, screen_h, Rgba::rgb(0, 0, 0).with_alpha((96.0 * fade).round() as u8));
+    let rest_top = screen_h - widgets::keyboard_height(t);
+    let keyboard_top = rest_top + rise;
+    let card_w = m.dp(DIALOG_MAX_W_DP).min(screen_w - m.dp(32.0));
+    let card_h = m.dp(DIALOG_H_DP);
+    let card_x = (screen_w - card_w) / 2.0;
+    let rest_y = ((screen_h - card_h) / 2.0)
+        .min(rest_top - card_h - m.margin)
+        .max(m.margin);
+    let card_y = rest_y + rise * (screen_h - rest_y) / (screen_h - rest_top).max(1.0);
+    c.fill_round_rect(card_x, card_y, card_w, card_h, m.dp(24.0), t.pal.card);
+    c.text_center(
+        &f.heading,
+        l.pick(texts::files::NEW_FOLDER),
+        card_x + card_w / 2.0,
+        card_y + m.dp(38.0),
+        m.row_title_px,
+        t.pal.text,
+    );
+    let field_x = card_x + m.inner;
+    let field_w = card_w - m.inner * 2.0;
+    let field_top = card_y + m.dp(64.0);
+    let (_, caret) = widgets::text_field_dialog(&mut c, t, f, field_x, field_w, field_top, text, selected);
+    c.stroke_round_rect(
+        field_x,
+        field_top,
+        field_w,
+        m.dp(56.0),
+        m.card_radius,
+        m.dp(1.5),
+        t.pal.accent,
+    );
+    let (gap, bh) = (m.dp(12.0), m.dp(48.0));
+    let buttons_w = card_w - m.inner * 2.0;
+    let bw = (buttons_w - gap) / 2.0;
+    let bx = card_x + m.inner;
+    let by = card_y + card_h - bh - m.dp(18.0);
+    let cancel = Rect::new(bx, by, bw, bh);
+    let confirm = Rect::new(bx + bw + gap, by, bw, bh);
+    c.fill_round_rect(
+        cancel.x,
+        cancel.y,
+        cancel.w,
+        cancel.h,
+        bh / 2.0,
+        t.pal.track,
+    );
+    c.text_center_in(
+        &f.heading,
+        l.pick(texts::common::CANCEL),
+        cancel.centre().0,
+        cancel.centre().1,
+        m.row_title_px,
+        t.pal.text,
+        cancel.w - m.dp(16.0),
+    );
+    c.fill_round_rect(
+        confirm.x,
+        confirm.y,
+        confirm.w,
+        confirm.h,
+        bh / 2.0,
+        t.pal.accent,
+    );
+    c.text_center_in(
+        &f.heading,
+        l.pick(texts::common::OK),
+        confirm.centre().0,
+        confirm.centre().1,
+        m.row_title_px,
+        Rgba::rgb(255, 255, 255),
+        confirm.w - m.dp(16.0),
+    );
+    let keys = widgets::keyboard(
+        &mut c,
+        t,
+        f,
+        l,
+        keyboard_top,
+        layer,
+        pressed,
+        l.pick(texts::common::OK),
+        false,
+    );
+    let mut hits = vec![
+        Hit {
+            rect: cancel,
+            action: Action::Back,
+        },
+        Hit {
+            rect: confirm,
+            action: Action::NewFolderConfirm,
+        },
+    ];
+    hits.extend(keys.into_iter().map(|(rect, cap)| Hit {
+        rect,
+        action: Action::Type(cap),
+    }));
+    hits.push(Hit {
+        rect: Rect::new(card_x, card_y, card_w, card_h),
+        action: Action::Nothing,
+    });
+    hits.push(Hit {
+        rect: Rect::new(0.0, keyboard_top, screen_w, screen_h - keyboard_top),
+        action: Action::Nothing,
+    });
+    hits.push(Hit {
+        rect: Rect::new(0.0, 0.0, screen_w, screen_h),
+        action: Action::Back,
+    });
+    (Dialog { canvas: c, x: 0, y: 0, hits }, caret)
 }
 
 /// What the page says in place of the list, centred below the path, with
@@ -612,12 +787,20 @@ mod tests {
     fn the_path_goes_up_by_its_capsules_and_shows_its_end_when_long() {
         let f = crate::font::bundled();
         let t = Theme::light(1440, 3200, 3.5);
-        let path = strip(&t, &f, "根目录", "/system/bin");
+        let path = strip(&t, &f, "根目录", "/system/bin", 0);
         let ups: Vec<Action> = path.hits.iter().map(|h| h.action).collect();
-        assert_eq!(ups, [Action::OpenAncestor(0), Action::OpenAncestor(1)], "the root and system go up; bin is where we are");
-        let place = strip(&t, &f, "内部存储", "Download");
-        assert_eq!(place.hits.iter().map(|h| h.action).collect::<Vec<_>>(), [Action::OpenAncestor(0)], "a place's top goes up");
-        let deep = strip(&t, &f, "根目录", "/data/media/0/Android/data/com.example.something.long/files/cache/images");
+        assert_eq!(
+            ups,
+            [Action::OpenAncestor(0), Action::OpenAncestor(1), Action::Open(Screen::Places)],
+            "the root and system go up; bin opens the places"
+        );
+        let place = strip(&t, &f, "内部存储", "Download", 0);
+        assert_eq!(
+            place.hits.iter().map(|h| h.action).collect::<Vec<_>>(),
+            [Action::OpenAncestor(0), Action::Open(Screen::Places)],
+            "a place's top goes up, and the place opens the places"
+        );
+        let deep = strip(&t, &f, "根目录", "/data/media/0/Android/data/com.example.something.long/files/cache/images", 0);
         let last = deep.hits.last().expect("the capsules before the folder shown");
         assert!(last.rect.x + last.rect.w < t.m.w as f32, "the end shows");
         assert!(deep.hits[0].rect.x < 0.0, "the start runs off the left edge");

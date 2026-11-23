@@ -76,6 +76,7 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::Specs => specs(cx),
         Screen::ScreenOff => screen_off(cx),
         Screen::Search => search(cx),
+        Screen::FileSearch => file_search(cx),
         Screen::Backup => backup(cx),
         Screen::Restore => restore(cx),
         Screen::RestoreBackup => restore_backup(cx),
@@ -109,6 +110,7 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::CantStart => cant_start(cx),
         Screen::Unhandled => unhandled(cx),
         Screen::Rename => rename(cx),
+        Screen::Places => places(cx),
         Screen::Clash => clash(cx),
         Screen::FileJob => file_job(cx),
         Screen::Wlan => wlan(cx),
@@ -496,15 +498,30 @@ pub fn aod_date_page(cx: &Ctx) -> Frame {
 }
 
 /// How the file manager orders the entries of a folder.
-pub fn file_sort_page(cx: &Ctx) -> Frame {    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
-    let mut c = page(cx);
+pub fn file_sort_page(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
     let top = t.m.content_top;
+    let mut out = Vec::new();
     let rows: Vec<Row> = SORT_KEYS.iter().map(|&k| Row::new(fmt::sort_name(l, k)).trail(Trail::Check(s.sort == k))).collect();
-    let list = widgets::list(&mut c, t, f, top, &rows);
-    let note = l.pick(texts::local::SORT_NOTE);
-    let y = widgets::footnote(&mut c, t, f, list.bottom, note);
+    let y = widgets::section_first(&mut c, t, f, top, l.pick(texts::local::SORT_BY));
+    let list = widgets::list(&mut c, t, f, y, &rows);
     let picks: Vec<Action> = (0..SORT_KEYS.len()).map(Action::SortKey).collect();
-    Frame::new(t, fit(c, t, y), hits(&list.rows, &picks), l.pick(texts::local::FILE_SORTING), top)
+    out.extend(hits(&list.rows, &picks));
+    let y = widgets::section(&mut c, t, f, list.bottom, l.pick(texts::local::SORT_ORDER));
+    let order = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[
+            Row::new(l.pick(texts::files::SORT_ASC)).trail(Trail::Check(!s.sort_desc)),
+            Row::new(l.pick(texts::files::SORT_DESC)).trail(Trail::Check(s.sort_desc)),
+        ],
+    );
+    out.extend(hits(&order.rows, &[Action::SortOrder(false), Action::SortOrder(true)]));
+    let y = widgets::footnote(&mut c, t, f, order.bottom, l.pick(texts::local::SORT_NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::local::FILE_SORTING), top)
 }
 
 /// The vbmeta flags of the slot: dm-verity, the bootloader's verification,
@@ -2916,9 +2933,43 @@ pub fn files(cx: &Ctx) -> Frame {
         let (canvas, rects) = widgets::dock_bar(t, f, files::page(t), &[l.pick(texts::common::CANCEL), go]);
         Dock { canvas, hits: hits(&rects, &[Action::Unpick, Action::Paste]) }
     });
-    let button = Some((widgets::Glyph::Terminal, Action::TerminalHere));
-    let root = l.pick(texts::files::ROOT);
-    Frame { dock, button, ..listing(cx, &s.files, root, None, l.pick(texts::files::NONE), Action::OpenEntry, l.pick(texts::page::FILES)) }
+    let (top, skip) = if s.files.path.starts_with("/sdcard") {
+        (l.pick(texts::files::STORAGE_DEVICE), 1)
+    } else if s.files.path.starts_with("/mnt/usb") {
+        (l.pick(texts::place::USB_DRIVE), 2)
+    } else {
+        (l.pick(texts::files::ROOT), 0)
+    };
+    let title = if s.files.path.starts_with("/sdcard") {
+        l.pick(texts::files::MY_PHONE)
+    } else if s.files.path.starts_with("/mnt/usb") {
+        l.pick(texts::place::USB_DRIVE)
+    } else {
+        l.pick(texts::page::FILES)
+    };
+    let mut frame = listing(cx, &s.files, top, None, l.pick(texts::files::NONE), Action::OpenEntry, title, skip);
+    frame.dock = dock;
+    frame.tools = vec![
+        (widgets::Glyph::FolderPlus, Action::NewFolder),
+        (widgets::Glyph::Sliders, Action::Open(Screen::FileSort)),
+        (widgets::Glyph::Search, Action::FilesSearch),
+    ];
+    if s.new_folder {
+        let (dialog, caret) = files::new_folder_dialog(
+            t,
+            f,
+            l,
+            s.layer,
+            s.key_held(),
+            s.new_folder_rise,
+            s.new_folder_closing,
+            s.new_folder_default,
+            &s.new_name,
+        );
+        frame.dialog = Some(dialog);
+        frame.caret = Some(caret);
+    }
+    frame
 }
 
 /// A place's folders and the files in them that can be installed, to
@@ -2936,7 +2987,7 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
         _ => None,
     };
     let empty = l.pick(texts::choose::NONE);
-    listing(cx, s.folder(Screen::Choose(place)), place_name(l, place), absent, empty, Action::ChooseEntry, l.pick(texts::choose::TITLE))
+    listing(cx, s.folder(Screen::Choose(place)), place_name(l, place), absent, empty, Action::ChooseEntry, l.pick(texts::choose::TITLE), 0)
 }
 
 /// A folder laid out as the stock file manager lays one out: the path as
@@ -2944,6 +2995,7 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
 /// entries in one list on the plain page, each row drawn as it scrolls into
 /// view and touched for `action`. In place of the list, `absent` says why
 /// nothing of the folder can be shown, and `empty` that it holds nothing.
+#[allow(clippy::too_many_arguments)]
 fn listing(
     cx: &Ctx,
     folder: &Folder,
@@ -2952,6 +3004,7 @@ fn listing(
     empty: &str,
     action: fn(usize) -> Action,
     title: &'static str,
+    skip: usize,
 ) -> Frame {
     let (t, f) = (cx.t, cx.f);
     let bg = files::page(t);
@@ -2971,7 +3024,7 @@ fn listing(
         }
         (None, Ok(entries)) => Some(files::rows(t, f, entries, action)),
     };
-    let pinned = Some(files::strip(t, f, top, &folder.path));
+    let pinned = Some(files::strip(t, f, top, &folder.path, skip));
     Frame { bg, rows, pinned, ..Frame::new(t, c, Vec::new(), title, t.m.dp(files::STRIP_TOP_DP)) }
 }
 
@@ -2979,8 +3032,8 @@ fn listing(
 /// drawn as the row comes into view.
 pub fn row(screen: Screen, cx: &Ctx, i: usize, c: &mut Canvas) {
     match screen {
-        Screen::Files | Screen::Choose(_) => {
-            let folder = cx.state.folder(screen);
+        Screen::Files | Screen::Choose(_) | Screen::FileSearch => {
+            let folder = if screen == Screen::FileSearch { &cx.state.files } else { cx.state.folder(screen) };
             let entries = folder.entries.as_ref().expect("a folder listed draws its rows");
             files::row(c, cx.t, cx.f, cx.state.lang, &entries[i], folder.listed, cx.state.time_zone);
         }
@@ -3097,6 +3150,26 @@ pub fn rename(cx: &Ctx) -> Frame {
     widgets::footnote(&mut c, t, f, y, l.pick(texts::files::RENAME_NOTE));
     keyboard_hits(&mut c, t, f, s, l.pick(texts::common::DONE), &mut out);
     Frame { caret: Some(caret), ..Frame::new(t, c, out, l.pick(texts::files::RENAME), top) }
+}
+
+fn places(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = page(cx);
+    let top = t.m.content_top;
+    let mut rows = vec![Row::new(l.pick(texts::place::STORAGE)).trail(Trail::None)];
+    if s.usb_drive.is_some() {
+        rows.push(Row::new(l.pick(texts::place::USB_DRIVE)).trail(Trail::None));
+    }
+    rows.push(Row::new(l.pick(texts::files::ROOT)).trail(Trail::None));
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let acts: Vec<Action> = (0..rows.len()).map(Action::OpenPlace).collect();
+    Frame::new(
+        t,
+        c,
+        hits(&list.rows, &acts),
+        l.pick(texts::files::PLACES),
+        top,
+    )
 }
 
 /// The folder an entry goes to already holds its name: what to do.
@@ -3245,6 +3318,71 @@ pub fn time_zone(cx: &Ctx) -> Frame {
     let out = hits(&list.rows, &picks);
     let bottom = widgets::footnote(&mut c, t, f, list.bottom, l.pick(texts::time_zone::NOTE));
     Frame::new(t, fit(c, t, bottom), out, l.pick(texts::page::TIME_ZONE), top)
+}
+
+/// The file manager's search page: a field at the top, the folder's matching
+/// entries below it, and the keys at the foot.
+pub fn file_search(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let m = &t.m;
+    let mut c = page(cx);
+    let mut out = Vec::new();
+    let top = m.content_top;
+    let field = widgets::search_field(
+        &mut c,
+        t,
+        f,
+        m.dp(48.0),
+        m.w as f32 - m.dp(96.0),
+        m.back_cy,
+        &s.files_query,
+        l.pick(texts::files::SEARCH),
+    );
+    out.push(Hit {
+        rect: field.field,
+        action: Action::FilesSearch,
+    });
+    if let Some(clear) = field.clear {
+        out.push(Hit {
+            rect: clear,
+            action: Action::ClearFilesSearch,
+        });
+    }
+    let rows_top = field.field.y + field.field.h + m.dp(12.0);
+    let rows = match &s.files.entries {
+        Ok(entries) if !entries.is_empty() => {
+            Some(files::rows_at(t, f, entries, Action::OpenEntry, rows_top))
+        }
+        _ => None,
+    };
+    let h = widgets::keyboard_height(t) as u32;
+    let mut keys = Canvas::new(m.w, h);
+    let caps = widgets::keyboard(
+        &mut keys,
+        t,
+        f,
+        s.lang,
+        0.0,
+        s.layer,
+        s.key_held(),
+        l.pick(texts::search::SEARCH),
+        false,
+    );
+    let bottom = m.h as f32 - h as f32;
+    out.extend(caps.into_iter().map(|(mut rect, cap)| {
+        rect.y += bottom;
+        Hit {
+            rect,
+            action: Action::Type(cap),
+        }
+    }));
+    Frame {
+        header: false,
+        rows,
+        keyboard: Some(keys),
+        caret: Some(field.caret),
+        ..Frame::new(t, c, out, l.pick(texts::files::SEARCH), top)
+    }
 }
 
 /// Saving the logs, as a bug report asks for them.

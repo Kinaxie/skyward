@@ -33,6 +33,15 @@ impl App {
         }
     }
 
+    /// A folder made in the folder the file manager shows went in: the
+    /// dialog closes and the folder stays where it was.
+    pub fn folder_made(&mut self, outcome: Result<(), String>, now: u64) {
+        match outcome {
+            Ok(()) => self.close_new_folder(now),
+            Err(why) => self.report(&why, now),
+        }
+    }
+
     /// The entry the file page shows was to have the permission bits
     /// `wanted`: those it has now, or why it has not.
     pub fn mode_set(&mut self, wanted: u32, outcome: Result<u32, String>, now: u64) {

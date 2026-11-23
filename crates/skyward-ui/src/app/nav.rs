@@ -74,13 +74,45 @@ impl App {
         self.dirty = true;
     }
 
+    /// Send the new-folder dialog and its keys down out of the page. The
+    /// page behind it is left as it was; the tick that settles the slide
+    /// puts the dialog away.
+    pub(super) fn close_new_folder(&mut self, now: u64) {
+        if !self.state.new_folder || self.state.new_folder_closing {
+            return;
+        }
+        self.state.new_folder_closing = true;
+        self.folder_open = None;
+        self.folder_close = Some(Spring::new(now, self.state.new_folder_rise - 1000.0, 0.0, 0.36));
+        self.refresh();
+    }
+
     /// Go back a page. Leaving the installing page stops what can be
     /// stopped; while a package is being read or written, the page stays.
     /// In the file manager, back climbs a folder until it reaches the root,
     /// and in a place, until it reaches the place's top.
     pub(super) fn back(&mut self, now: u64) -> Vec<Effect> {
         let (l, mut fx) = (self.state.lang, Vec::new());
+        if self.state.new_folder {
+            self.close_new_folder(now);
+            return fx;
+        }
         if self.stack.len() <= 1 {
+            if self.screen() == Screen::Files {
+                self.state.clip = None;
+                self.state.files_query.clear();
+                self.state.files_search = false;
+                self.state.new_folder = false;
+                self.state.new_folder_closing = false;
+                self.state.new_folder_default = false;
+                self.state.new_name.clear();
+                self.state.new_folder_rise = 0.0;
+                self.folder_open = None;
+                self.folder_close = None;
+                *self.top_mut() = (Screen::Home, 0.0, Focus::Unset);
+                self.settle_page();
+                self.refresh();
+            }
             return fx;
         }
         let morph = self.screen() == Screen::Search && self.stack[self.stack.len() - 2].0 == Screen::Home;
@@ -108,11 +140,25 @@ impl App {
                 }
                 // Leaving the file manager puts a picked entry down.
                 self.state.clip = None;
+                self.state.files_query.clear();
+                self.state.files_search = false;
+                self.state.new_folder = false;
+                self.state.new_folder_closing = false;
+                self.state.new_folder_default = false;
+                self.state.new_name.clear();
+                self.state.new_folder_rise = 0.0;
+                self.folder_open = None;
+                self.folder_close = None;
             }
             Screen::Choose(place) => {
                 if let Some(up) = self.state.folder(Screen::Choose(place)).up() {
                     return vec![Effect::ReadPlace(place, up)];
                 }
+            }
+            Screen::FileSearch => {
+                self.state.files_query.clear();
+                self.state.files.set_query("");
+                self.state.files_search = false;
             }
             Screen::FileInfo => {
                 self.state.file = None;
@@ -289,11 +335,22 @@ impl App {
             Screen::Slot | Screen::Reboot => vec![Effect::ReadSlots],
             Screen::Systems => vec![Effect::ReadSystems],
             Screen::Restore => vec![self.find_backups()],
-            Screen::Files => vec![Effect::ReadDir(self.state.files.path.clone())],
+            Screen::Files => {
+                self.state.files_query.clear();
+                self.state.files_search = false;
+                let path = if self.state.data.storage_open() { "/sdcard".into() } else { self.state.files.path.clone() };
+                vec![Effect::ReadDir(path)]
+            }
             Screen::Choose(place) if self.state.place_open(place) => vec![Effect::ReadPlace(place, self.state.folder(s).path.clone())],
             Screen::Search => {
                 self.state.search.clear();
                 self.state.layer = Layer::Letters;
+                Vec::new()
+            }
+            Screen::FileSearch => {
+                self.state.files_query.clear();
+                self.state.files.set_query("");
+                self.state.files_search = true;
                 Vec::new()
             }
             Screen::Terminal => {

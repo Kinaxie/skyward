@@ -30,6 +30,11 @@ pub struct State {
     pub wake_tap: bool,
     /// How the file manager orders the entries of a folder.
     pub sort: SortKey,
+    pub sort_desc: bool,
+    /// What the file manager's search field holds, and whether its keys
+    /// are up.
+    pub files_query: String,
+    pub files_search: bool,
     /// What the slot's vbmeta says, once read.
     pub avb: Option<Result<AvbStatus, String>>,
     pub avb_verity: bool,
@@ -158,8 +163,13 @@ pub struct State {
     /// The entry picked to copy or move, while a folder for it is looked
     /// for.
     pub clip: Option<Clip>,
-    /// What is typed as an entry's new name.
+    /// What is typed as an entry's new name, and whether the file manager's
+    /// new-folder dialog is up over it, and how far it still has to rise.
     pub new_name: String,
+    pub new_folder: bool,
+    pub new_folder_closing: bool,
+    pub new_folder_default: bool,
+    pub new_folder_rise: f32,
     /// The text file the editor page shows, as typed so far.
     pub editor: Option<Editor>,
     /// Deleting the entry the file page shows, or the backup the restore
@@ -228,7 +238,10 @@ impl Default for State {
             aod_date: 0,
             aod_tap: true,
             wake_tap: true,
-            sort: SortKey::AsListed,
+            sort: SortKey::Name,
+            sort_desc: false,
+            files_query: String::new(),
+            files_search: false,
             avb: None,
             avb_verity: true,
             avb_verification: true,
@@ -289,6 +302,10 @@ impl Default for State {
             asked: Asked::default(),
             clip: None,
             new_name: String::new(),
+            new_folder: false,
+            new_folder_closing: false,
+            new_folder_default: false,
+            new_folder_rise: 0.0,
             editor: None,
             asking_delete: false,
             clash: None,

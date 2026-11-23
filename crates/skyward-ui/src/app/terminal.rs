@@ -128,30 +128,16 @@ mod tests {
     }
 
     #[test]
-    fn the_file_managers_button_opens_the_terminal_in_the_folder_shown() {
-        let (f, i) = (fonts(), info());
-        let mut app = App::new(Screen::Files, W, H, PPD);
-        app.state.vibrate = false;
-        app.set_files("/sdcard/Download".into(), Ok(vec![entry("a.txt", FileKind::File)]), 0);
-        assert_eq!(app.frame(&f, &i).button, Some((widgets::Glyph::Terminal, Action::TerminalHere)));
-        assert_eq!(tap_button(&mut app, &f, &i, 0), vec![Effect::StartShell("/sdcard/Download".into())], "a shell starts there");
-        assert_eq!(app.screen(), Screen::Terminal);
-        let (rows, cols) = app.term_size(&f);
-        app.term_started(rows, cols);
-        app.term_ended(TermEnd::Exited(0));
-        assert_eq!(tap(&mut app, &f, &i, Action::Type(Cap::Enter)), vec![Effect::StartShell("/sdcard/Download".into())], "Enter starts it again there");
-        app.term_started(rows, cols);
-        tap_back(&mut app, &f, &i, 0);
-        app.set_files("/data/adb".into(), Ok(Vec::new()), 0);
-        assert_eq!(tap_button(&mut app, &f, &i, 0), vec![Effect::ShellTo("/data/adb".into())], "the shell running goes there");
-        assert_eq!(app.screen(), Screen::Terminal);
-    }
-
-    #[test]
     fn the_bars_round_button_darkens_under_a_finger_on_the_frames_drawn() {
         let (f, i) = (fonts(), info());
-        let mut app = App::new(Screen::Files, W, H, PPD);
-        app.set_files("/data/adb".into(), Ok(vec![entry("a.txt", FileKind::File)]), LISTED);
+        let mut app = App::new(Screen::Editor, W, H, PPD);
+        app.text_opened(&f, "/data/adb/a.txt".into(), Ok(Some(b"a".to_vec())), 0);
+        app.state
+            .editor
+            .as_mut()
+            .expect("the editor page shows a file")
+            .insert('b');
+        app.refresh();
         let t = app.theme();
         let (cx, cy, _) = widgets::button_disc(&t);
         let k = (((cy - t.m.dp(5.0)) as u32 * W + (cx + t.m.dp(5.0)) as u32) * 4) as usize;
@@ -165,20 +151,7 @@ mod tests {
         let rest = pixel(&mut app, 0);
         app.touch(Touch::Down(x, y), &f, 100);
         assert_ne!(pixel(&mut app, 100), rest, "held down, its disc darkens");
-        assert_eq!(app.touch(Touch::Up, &f, 150), vec![Effect::StartShell("/data/adb".into())]);
-        for now in (150..1000).step_by(8) {
-            pixel(&mut app, now);
-        }
-        assert_eq!(app.screen(), Screen::Terminal, "the terminal slides in");
-        app.text_opened(&f, "/data/adb/a.txt".into(), Ok(Some(b"a".to_vec())), 1000);
-        app.state.editor.as_mut().expect("the editor page shows a file").insert('b');
-        app.refresh();
-        for now in (1000..1500).step_by(8) {
-            pixel(&mut app, now);
-        }
-        app.touch(Touch::Down(x, y), &f, 1500);
-        pixel(&mut app, 1500);
-        assert_eq!(app.touch(Touch::Up, &f, 1550), vec![Effect::SaveText { path: "/data/adb/a.txt".into(), text: "ba".into() }]);
+        assert_eq!(app.touch(Touch::Up, &f, 150), vec![Effect::SaveText { path: "/data/adb/a.txt".into(), text: "ba".into() }]);
     }
 
     #[test]

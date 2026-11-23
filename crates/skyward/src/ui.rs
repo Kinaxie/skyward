@@ -2,12 +2,12 @@ use crate::backup;
 use crate::decrypt::{self, Decryptor};
 use crate::filework;
 use crate::haptics::Haptics;
-use crate::relabel;
-use crate::input::{monotonic_ms, Event, Inputs};
+use crate::input::{ Event, Inputs, monotonic_ms};
 use crate::merge;
 use crate::partwork;
 use crate::pty;
 use crate::readings::{Reading, Readings};
+use crate::relabel;
 use crate::secure;
 use crate::services;
 use crate::settings;
@@ -15,30 +15,30 @@ use crate::systems;
 use crate::updates;
 use crate::wipe::{self, Eraser, Step};
 use crate::wlan;
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{Context, Result,anyhow, ensure};
 use skyward_block::fsck::Fixed;
+use skyward_block::usb::{self, Drive};
 use skyward_block::{fstab, mount, probe};
 use skyward_config::{DeviceConfig, Service};
 use skyward_crypto::data::{Closed, Opened};
+use skyward_files::Ownership;
 use skyward_install::asked::{self, Needs};
 use skyward_install::{Detach, Installer, Options};
-use skyward_sys::bcb::{self, Work, REFORMATS};
-use skyward_sys::control::{Control, Request};
-use skyward_sys::Power;
-use skyward_files::Ownership;
-use skyward_block::usb::{self, Drive};
 use skyward_net::download::{self, Failure};
 use skyward_net::http::Servers;
 use skyward_net::release::{Installed, Release, Unanswered};
 use skyward_net::wlan::{Power as WlanPower, Stage as Joining, Wlan};
+use skyward_sys::Power;
+use skyward_sys::bcb::{self, REFORMATS, Work};
+use skyward_sys::control::{Control, Request};
 use skyward_sys::sleep::{Sleeper, Slept};
 use skyward_sys::uevent;
 use skyward_systems::Who;
 use skyward_ui::app::{
-    App, Asked, BackupAt, BackupEnd, BackupEntry, BackupRefusal, ClashChoice, Data, DownloadEnd, Effect, EraseStop, FileKind, FileOp,
-    FileRow, FileTask, FsAction, FsRow, Have, Held, ItemEnd, ItemState, JobEnd, Keys, MountFailure, Part, PartKind, PartStop, Place,
-    RenameRefused, Screen, Shot, SkywardEnd, SkywardStage, Target, UsbDrive, UsbLink, Wipe, DATA_OPENING, DATA_PARTITION, DOWNLOADS,
-    INSTALL_UNFINISHED, USB_DRIVE,
+    App, Asked, BackupAt, BackupEnd, BackupEntry, BackupRefusal, ClashChoice, DATA_OPENING,
+    DATA_PARTITION, DOWNLOADS, Data, DownloadEnd, Effect, EraseStop, FileKind, FileOp,
+    FileRow, FileTask, FsAction, FsRow, Have, Held, INSTALL_UNFINISHED, ItemEnd, ItemState, JobEnd, Keys, MountFailure, Part, PartKind, PartStop, Place,
+    RenameRefused, Screen, Shot, SkywardEnd, SkywardStage, Target, USB_DRIVE, UsbDrive, UsbLink, Wipe,
 };
 use skyward_ui::settings::Keeper;
 use skyward_ui::surface::kms::KmsSurface;
@@ -3022,6 +3022,34 @@ impl Pages<'_> {
                 Err(e) if e.is::<skyward_files::Taken>() => self.app.renamed(Err(RenameRefused::Taken), now),
                 Err(e) => self.app.renamed(Err(RenameRefused::Failed(format!("{e:#}"))), now),
             },
+            Effect::Mkdir { path, name } => {
+                let dir = if name.starts_with('/') {
+                    PathBuf::from(&name)
+                } else {
+                    Path::new(&path).join(&name)
+                };
+                let safe = !dir.components().any(|part| {
+                    matches!(
+                        part,
+                        std::path::Component::ParentDir | std::path::Component::CurDir
+                    )
+                });
+                let made = if !safe {
+                    Err("the folder path holds . or ..".to_string())
+                } else if dir.exists() {
+                    Err(format!("{} already exists", dir.display()))
+                } else {
+                    fs::create_dir_all(&dir).map_err(|e| format!("{e:#}"))
+                };
+                match made {
+                    Ok(()) => {
+                        let folder = path.clone();
+                        list(&mut self.app, folder)?;
+                        self.app.folder_made(Ok(()), now);
+                    }
+                    Err(e) => self.app.folder_made(Err(e), now),
+                }
+            }
             // A partition that will not mount, or is in use, is the
             // page's to report; the recovery carries on.
             Effect::Mount(base) => {

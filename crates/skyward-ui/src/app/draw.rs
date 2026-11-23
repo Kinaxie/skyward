@@ -72,8 +72,10 @@ impl App {
             }
         }
         // The page the recovery starts on has nothing to go back to, so it
-        // shows no way back even where its layout draws one.
-        if self.stack.len() <= 1
+        // shows no way back even where its layout draws one. The file
+        // manager keeps its way back to leave it when it is the only page.
+        let root = self.stack.len() <= 1 && self.screen() != Screen::Files;
+        if root
             && let Some(frame) = self.frame.as_mut()
         {
             frame.back = false;
@@ -450,6 +452,9 @@ impl App {
                 self.spare.clear();
             }
             press_row(out);
+            if let Some(keyboard) = &frame.keyboard {
+                out.put(keyboard, (out.h - keyboard.h) as i32);
+            }
             if let Some(fold) = &frame.fold {
                 let (_, words) = self.search_words.as_ref().expect("a folding search bar's words are made with its page");
                 fold.draw(out, t, words, offset);
@@ -468,9 +473,6 @@ impl App {
                 Some(r) => widgets::search_bar_held(out, t, r),
                 None => {}
             }
-        }
-        if let Some(caret) = frame.caret.as_ref().filter(|_| view.caret) {
-            out.lay(&caret.art, caret.x, caret.y - offset as i32, 1.0);
         }
         let bar = view.bar;
         let strip = frame.pinned.as_ref().map(|p| (p, pinned_top(t, p, offset)));
@@ -512,12 +514,35 @@ impl App {
                 widgets::button_glyph(out, t, glyph, t.pal.text);
             }
         }
-        if frame.back || frame.button.is_some() {
+        for (i, (glyph, action)) in frame.tools.iter().enumerate() {
+            let r = widgets::tool_rect(t, i, frame.tools.len());
+            let (chip, x, y) = widgets::tool_chip(t, i, frame.tools.len());
+            out.lay(&chip, x, y, bar);
+            widgets::tool_glyph(
+                out,
+                t,
+                *glyph,
+                r,
+                if pressing == Some(*action) {
+                    t.pal.accent
+                } else {
+                    t.pal.text
+                },
+            );
+        }
+        if frame.back || frame.button.is_some() || !frame.tools.is_empty() {
             shine(out, Group::Fixed);
         }
         let level = view.title;
         let blur = if frame.hero.is_some() { 0.0 } else { (1.0 - level) * m.dp(TITLE_BLUR_DP) };
         draw_faded(out, small, 0.0, 0.0, t.pal.text, level, blur);
+        if let Some(dialog) = &frame.dialog {
+            out.lay(&dialog.canvas, dialog.x, dialog.y, 1.0);
+        }
+        if let Some(caret) = frame.caret.as_ref().filter(|_| view.caret) {
+            let down = if frame.dialog.is_some() { 0 } else { offset as i32 };
+            out.lay(&caret.art, caret.x, caret.y - down, 1.0);
+        }
     }
 
     /// Where a page sliding in over the page left, or the page left

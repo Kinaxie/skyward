@@ -44,11 +44,27 @@ pub struct Frame {
     /// A strip held at the bottom of the screen over the page; the page
     /// scrolls far enough for nothing to stay under it.
     pub dock: Option<Dock>,
+    /// Keys drawn over the page's rows, such as the file manager's search
+    /// keyboard.
+    pub keyboard: Option<Canvas>,
+    /// A menu or dialog over the page.
+    pub dialog: Option<Dialog>,
     /// A text field's blinking cursor, in page coordinates.
     pub caret: Option<widgets::Caret>,
     /// The round button at the right end of the bar: what it shows, and
     /// what touching it does.
     pub button: Option<(widgets::Glyph, Action)>,
+    /// Icons at the right of the bar, left to right.
+    pub tools: Vec<(widgets::Glyph, Action)>,
+}
+
+/// A menu or dialog laid over the page, its canvas placed at (`x`, `y`) and
+/// its hits in the page's own coordinates.
+pub struct Dialog {
+    pub canvas: Canvas,
+    pub x: i32,
+    pub y: i32,
+    pub hits: Vec<Hit>,
 }
 
 /// A strip held at the bottom of the screen over the page, such as the
@@ -208,7 +224,10 @@ impl Frame {
             fold: None,
             scrollback: None,
             dock: None,
+            keyboard: None,
+            dialog: None,
             caret: None,
+            tools: Vec::new(),
             button: None,
         }
     }

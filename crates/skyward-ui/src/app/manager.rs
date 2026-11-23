@@ -124,9 +124,11 @@ pub enum SortKey {
     Name,
     Size,
     Modified,
+    Kind,
 }
 
-pub const SORT_KEYS: [SortKey; 4] = [SortKey::AsListed, SortKey::Name, SortKey::Size, SortKey::Modified];
+pub const SORT_KEYS: [SortKey; 4] = [SortKey::Name, SortKey::Size, SortKey::Modified,
+    SortKey::Kind];
 
 /// Whether `row` is a folder, or a link that points to one.
 fn is_folder(row: &FileRow) -> bool {
@@ -135,7 +137,7 @@ fn is_folder(row: &FileRow) -> bool {
 
 /// Put `rows` in the order the file manager shows them: folders first, by
 /// name, then the files by `key`; names break every tie.
-pub fn sort_rows(rows: &mut [FileRow], key: SortKey) {
+pub fn sort_rows(rows: &mut [FileRow], key: SortKey, desc: bool) {
     if key == SortKey::AsListed {
         return;
     }
@@ -148,10 +150,16 @@ pub fn sort_rows(rows: &mut [FileRow], key: SortKey) {
         if a_folder {
             return by_name();
         }
+        let order =
         match key {
             SortKey::AsListed | SortKey::Name => by_name(),
-            SortKey::Size => b.size.cmp(&a.size).then_with(by_name),
-            SortKey::Modified => b.modified.cmp(&a.modified).then_with(by_name),
+            SortKey::Size => a.size.cmp(&b.size).then_with(by_name),
+            SortKey::Modified => a.modified.cmp(&b.modified).then_with(by_name),
+            SortKey::Kind => crate::files::file_type(&a.name)
+                .cmp(&crate::files::file_type(&b.name))
+                .then_with(by_name),
+        };
+        if desc { order.reverse() } else { order
         }
     });
 }
@@ -167,17 +175,56 @@ pub struct Folder {
     /// The folders left for one inside them, outermost first, with how far
     /// each was scrolled.
     left: Vec<(String, f32)>,
+    /// The whole listing while a query hides some of it.
+    all: Option<Vec<FileRow>>,
+    query: String,
 }
 
 impl Folder {
     /// The folder at `path`, not read yet.
     pub fn new(path: &str) -> Folder {
-        Folder { path: path.into(), entries: Ok(Vec::new()), listed: 0, left: Vec::new() }
+        Folder { path: path.into(), entries: Ok(Vec::new()), listed: 0, left: Vec::new(), all: None, query: String::new() }
     }
 
     /// The entry at this place in the list.
     pub(super) fn entry(&self, i: usize) -> &FileRow {
         &self.entries.as_ref().expect("an entry touched is one the list shows")[i]
+    }
+
+    /// Hide the entries whose names do not hold `query`; an empty query
+    /// shows all of them again.
+    pub(super) fn set_query(&mut self, query: &str) {
+        self.query = query.to_string();
+        self.apply_query();
+    }
+
+    fn apply_query(&mut self) {
+        if self.query.is_empty() {
+            if let Some(all) = self.all.take() {
+                self.entries = Ok(all);
+            }
+            return;
+        }
+        let Ok(entries) = &self.entries else { return };
+        if self.all.is_none() {
+            self.all = Some(entries.clone());
+        }
+        let needle = self.query.to_lowercase();
+        let all = self.all.as_ref().expect("the whole listing was just saved");
+        self.entries = Ok(all
+            .iter()
+            .filter(|e| needle.is_empty() || e.name.to_lowercase().contains(&needle))
+            .cloned()
+            .collect());
+    }
+
+    pub(super) fn sort(&mut self, key: SortKey, desc: bool) {
+        if let Some(all) = &mut self.all {
+            sort_rows(all, key, desc);
+            self.apply_query();
+        } else if let Ok(entries) = &mut self.entries {
+            sort_rows(entries, key, desc);
+        }
     }
 
     /// Where the entry of this name in the folder is.
@@ -382,9 +429,21 @@ impl App {
     /// does; any other starts from its top.
     fn show_folder(&mut self, screen: Screen, folder: String, files: Result<Vec<FileRow>, String>, listed: i64) {
         let files = files.map(|mut entries| {
-            sort_rows(&mut entries, self.state.sort);
+            sort_rows(&mut entries, self.state.sort, self.state.sort_desc);
             entries
         });
+        let entered = folder != self.state.folder(screen).path;
+        if entered && screen == Screen::Files {
+            self.state.files_query.clear();
+            self.state.files_search = false;
+            self.state.new_folder = false;
+            self.state.new_folder_closing = false;
+            self.state.new_folder_default = false;
+            self.state.new_name.clear();
+            self.state.new_folder_rise = 0.0;
+            self.folder_open = None;
+            self.folder_close = None;
+        }
         let left = &self.state.folder(screen).path;
         if folder != *left && self.screen() == screen {
             // Climbing out of a folder, the keys come back to it; any other
@@ -413,10 +472,17 @@ impl App {
         {
             *file = listed.clone();
         }
+        let query = if screen == Screen::Files {
+            self.state.files_query.clone()
+        } else {
+            String::new()
+        };
         let shown = self.state.folder_mut(screen);
         shown.path = folder;
         shown.entries = files;
         shown.listed = listed;
+        shown.all = None;
+        shown.set_query(&query);
         self.refresh();
     }
 }
@@ -440,15 +506,135 @@ mod tests {
         assert_eq!(app.key(Key::Back, 0), vec![Effect::ReadDir("/".into())], "back climbs a folder");
         assert_eq!(app.screen(), Screen::Files);
         app.set_files("/".into(), Ok(vec![entry("vmlinux", FileKind::File), entry("init.rc", FileKind::File)]), LISTED);
-        assert_eq!(tap(&mut app, &f, &i, Action::OpenEntry(1)), vec![Effect::OpenText("/init.rc".into())], "a text file opens to edit");
+        assert_eq!(tap(&mut app, &f, &i, Action::OpenEntry(0)), vec![Effect::OpenText("/init.rc".into())], "a text file opens to edit");
         assert_eq!(app.screen(), Screen::Files);
-        tap(&mut app, &f, &i, Action::OpenEntry(0));
+        tap(&mut app, &f, &i, Action::OpenEntry(1));
         assert_eq!(app.screen(), Screen::FileInfo);
         assert_eq!(app.state.file.as_ref().map(|e| e.name.as_str()), Some("vmlinux"));
         app.key(Key::Back, 0);
         assert_eq!(app.state.file, None);
         assert!(app.key(Key::Back, 0).is_empty(), "at the root, back leaves");
         assert_eq!(app.screen(), Screen::Advanced);
+    }
+
+    #[test]
+    fn the_file_manager_keeps_its_way_back_when_it_is_the_first_page() {
+        let (f, i) = (fonts(), info());
+        let mut app = App::new(Screen::Files, W, H, PPD);
+        app.set_files("/sdcard".into(), Ok(vec![entry("DCIM", folder(2))]), LISTED);
+        assert!(app.frame(&f, &i).back, "the manager always shows the way out");
+        assert!(app.key(Key::Back, 0).is_empty());
+        assert_eq!(app.screen(), Screen::Home);
+    }
+
+    #[test]
+    fn the_file_manager_filters_the_folder_and_cycles_its_order() {
+        let (f, i) = (fonts(), info());
+        let mut app = in_sdcard(&f, &i);
+        tap(&mut app, &f, &i, Action::FilesSearch);
+        assert_eq!(app.screen(), Screen::FileSearch);
+        assert!(
+            app.frame(&f, &i).keyboard.is_some(),
+            "the search keys are over the results"
+        );
+        type_text(&mut app, &f, &i, "zip");
+        assert_eq!(
+            app.state
+                .files
+                .entries
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            ["a.zip"]
+        );
+        tap_back(&mut app, &f, &i, 0);
+        assert_eq!(app.screen(), Screen::Files);
+        assert_eq!(app.state.files.entries.as_ref().unwrap().len(), 2);
+        tap(&mut app, &f, &i, Action::Open(Screen::FileSort));
+        assert_eq!(app.screen(), Screen::FileSort);
+        tap(&mut app, &f, &i, Action::SortKey(0));
+        assert_eq!(app.state.sort, SortKey::Name);
+        tap(&mut app, &f, &i, Action::SortOrder(true));
+        assert!(app.state.sort_desc);
+    }
+
+    #[test]
+    fn the_file_manager_makes_a_folder_and_switches_places() {
+        let (f, i) = (fonts(), info());
+        let mut app = in_sdcard(&f, &i);
+        let tools = &app.frame(&f, &i).tools;
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0].1, Action::NewFolder, "{tools:?}");
+        let (x, y) = crate::widgets::tool_rect(&app.theme(), 0, 3).centre();
+        app.touch(Touch::Down(x, y), &f, 0);
+        app.touch(Touch::Up, &f, 0);
+        assert_eq!(app.screen(), Screen::Files);
+        assert!(app.state.new_folder);
+        assert!(app.frame(&f, &i).dialog.is_some());
+        app.tick(1000);
+        app.frame(&f, &i);
+        type_text(&mut app, &f, &i, "new");
+        assert_eq!(
+            tap(&mut app, &f, &i, Action::Type(Cap::Enter)),
+            vec![
+                Effect::Haptic,
+                Effect::Mkdir {
+                    path: "/sdcard".into(),
+                    name: "new".into()
+                }
+            ]
+        );
+        app.state.new_name = "/home/xxxx/".into();
+        app.refresh();
+        assert_eq!(
+            tap(&mut app, &f, &i, Action::Type(Cap::Enter)),
+            vec![
+                Effect::Haptic,
+                Effect::Mkdir {
+                    path: "/sdcard".into(),
+                    name: "/home/xxxx".into()
+                }
+            ]
+        );
+
+        let mut app = in_sdcard(&f, &i);
+        assert!(app.frame(&f, &i).pinned.as_ref().is_some_and(|p| {
+            p.hits
+                .iter()
+                .any(|h| h.action == Action::Open(Screen::Places))
+        }));
+        tap(&mut app, &f, &i, Action::Open(Screen::Places));
+        assert_eq!(app.screen(), Screen::Places);
+        assert_eq!(
+            tap(&mut app, &f, &i, Action::OpenPlace(0)),
+            vec![Effect::ReadDir("/sdcard".into())]
+        );
+        assert_eq!(app.screen(), Screen::Files);
+    }
+
+    #[test]
+    fn the_new_folder_dialog_rises_and_falls_over_a_page_that_stays_still() {
+        let (f, i) = (fonts(), info());
+        let mut app = in_sdcard(&f, &i);
+        tap(&mut app, &f, &i, Action::NewFolder);
+        assert!(app.state.new_folder);
+        assert!(app.state.new_folder_rise > 0.0, "the dialog comes up from below");
+        app.tick(1000);
+        assert_eq!(app.state.new_folder_rise, 0.0);
+        app.frame(&f, &i);
+
+        let scroll = app.top().1;
+        app.touch(Touch::Down(10.0, H as f32 * 0.6), &f, 1000);
+        app.touch(Touch::Move(10.0, H as f32 * 0.3), &f, 1000);
+        assert_eq!(app.top().1, scroll, "the page under the dialog does not move");
+        app.touch(Touch::Up, &f, 1000);
+        assert!(app.state.new_folder_closing, "the touch outside sends it down");
+        assert_eq!(app.screen(), Screen::Files);
+
+        app.tick(2000);
+        assert!(!app.state.new_folder);
     }
 
     #[test]
@@ -473,7 +659,7 @@ mod tests {
         ];
         app.set_place(Place::Storage, String::new(), Ok(listed), LISTED);
         let shown: Vec<&str> = app.state.storage.entries.as_ref().expect("listed").iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(shown, ["Download", "OTA.ZIP", "boot.img"], "folders and what can be installed, hidden ones left out");
+        assert_eq!(shown, ["Download", "boot.img", "OTA.ZIP"], "folders and what can be installed, hidden ones left out");
         assert_eq!(tap(&mut app, &f, &i, Action::ChooseEntry(0)), vec![Effect::ReadPlace(Place::Storage, "Download".into())]);
         app.set_place(Place::Storage, "Download".into(), Ok(vec![entry("ota.zip", FileKind::File)]), LISTED);
         assert_eq!(tap(&mut app, &f, &i, Action::ChooseEntry(0)), vec![Effect::InstallFile(Place::Storage, "Download/ota.zip".into())]);

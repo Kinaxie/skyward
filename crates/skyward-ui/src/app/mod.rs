@@ -16,9 +16,9 @@ use crate::glow::{self, GlowClock};
 use crate::lang::{same, Lang, Text};
 use crate::motion::{self, Spring};
 use crate::pages::{self, Band, Ctx};
-use crate::sprite::{Blurs, Sprite};
 use crate::search;
 use crate::settings::Settings;
+use crate::sprite::{Blurs, Sprite};
 use crate::term::{self, Term, TermKey};
 use crate::texts;
 use crate::theme::Theme;
@@ -108,6 +108,8 @@ pub enum Screen {
     /// Finding a feature or partition by name, typed on the screen's own
     /// keyboard.
     Search,
+    /// Finding a file in the folder the file manager shows.
+    FileSearch,
     Backup,
     /// The backups found, to restore one.
     Restore,
@@ -186,6 +188,8 @@ pub enum Screen {
     /// A new name for the entry the file page shows, typed on the screen's
     /// keyboard.
     Rename,
+    /// The paths the file manager can start from.
+    Places,
     /// The folder an entry is copied or moved to already holds that name;
     /// what to do is the user's to choose.
     Clash,
@@ -253,6 +257,9 @@ pub enum Action {
     /// Try opening the data partition again, after it did not open.
     OpenData,
     Back,
+    /// A part of a dialog that answers nothing: it keeps a touch from
+    /// reaching the page under the dialog.
+    Nothing,
     Theme { dark: bool },
     Toggle(Switch),
     RebootTarget(usize),
@@ -291,6 +298,8 @@ pub enum Action {
     /// Order the file manager's files this way, by its place in
     /// [`SORT_KEYS`].
     SortKey(usize),
+    /// Put the files in descending order, or ascending.
+    SortOrder(bool),
     /// Speak this language.
     Language(Lang),
     /// Tick or untick a part of the backup, by its place in
@@ -327,6 +336,18 @@ pub enum Action {
     ClearSearch,
     /// Leave the search, by the round button beside its field.
     CloseSearch,
+    /// Open the file manager's search field and its keys.
+    FilesSearch,
+    /// Put the file manager's keys away, leaving what is typed.
+    CloseFilesSearch,
+    /// Empty the file manager's search field.
+    ClearFilesSearch,
+    /// Make a folder in the folder the file manager shows.
+    NewFolder,
+    /// Make the folder the file manager's dialog names.
+    NewFolderConfirm,
+    /// Show the file manager at one of the places it can start from.
+    OpenPlace(usize),
     /// Open the file manager's entry at this place in the folder: a folder
     /// to look in, a text file to edit, or what can be done with any other.
     OpenEntry(usize),
@@ -577,6 +598,8 @@ pub enum Effect {
     /// Give an entry a new name; how it went comes back with
     /// [`App::renamed`].
     Rename { path: String, name: String },
+    /// Make a folder called `name` in the folder at `path`.
+    Mkdir { path: String, name: String },
     /// Give an entry these permission bits; how it went comes back with
     /// [`App::mode_set`].
     SetMode { path: String, mode: u32 },
@@ -663,6 +686,9 @@ enum Drag {
     /// `at` is when it came down: held long enough over an entry of the file
     /// manager, it opens what can be done with that entry.
     Press { x: f32, y: f32, action: Option<Action>, edge: Option<bool>, at: u64 },
+    /// A finger on a dialog over the page: it answers when the finger
+    /// lifts, and nothing behind the dialog moves meanwhile.
+    Modal { action: Option<Action> },
     /// A press held long enough to have done its work; nothing it does
     /// counts until it lifts.
     Held,
@@ -1230,6 +1256,10 @@ pub struct App {
     darkening: Option<f32>,
     /// The keyboard sliding down out of the way, or back up.
     keys_slide: Option<Spring>,
+    /// The new-folder dialog and its keyboard rising over the file page, or
+    /// sinking away from it.
+    folder_open: Option<Spring>,
+    folder_close: Option<Spring>,
     /// The always-on screen a touch on the dark panel brought up, since
     /// when.
     aod: Option<u64>,
@@ -1332,6 +1362,8 @@ impl App {
             curtain: Fade::shown(BRIGHTEN, DARKEN),
             darkening: None,
             keys_slide: None,
+            folder_open: None,
+            folder_close: None,
             aod: None,
             dark_touch: None,
             last_tap: None,
@@ -1455,6 +1487,8 @@ impl App {
                 || self.row_press.is_some_and(|p| p.changing(now) || p.gone(now))
                 || self.glowing()
                 || self.keys_slide.is_some()
+                || self.folder_open.is_some()
+                || self.folder_close.is_some()
                 || (self.aod.is_some() && self.display_on)
                 || self.toast.as_ref().is_some_and(|(_, at, until)| now < *at + TOAST_IN_MS || now + TOAST_OUT_MS > *until));
         // The content going dark or coming up, and the charging screen's
@@ -1622,6 +1656,29 @@ impl App {
             if done {
                 self.state.keys_drop = if self.state.keys_hidden { settle } else { 0.0 };
                 self.keys_slide = None;
+            }
+        }
+        if let Some(spring) = self.folder_open {
+            let (offset, done) = spring.at(now);
+            self.state.new_folder_rise = offset.max(0.0);
+            self.refresh();
+            if done {
+                self.state.new_folder_rise = 0.0;
+                self.folder_open = None;
+            }
+        }
+        if let Some(spring) = self.folder_close {
+            let (offset, done) = spring.at(now);
+            self.state.new_folder_rise = (1000.0 + offset).clamp(0.0, 1000.0);
+            self.refresh();
+            if done {
+                self.state.new_folder_rise = 1000.0;
+                self.folder_close = None;
+                self.state.new_folder = false;
+                self.state.new_folder_closing = false;
+                self.state.new_folder_default = false;
+                self.state.new_name.clear();
+                self.refresh();
             }
         }
         if let Some((target, spring)) = self.seek {

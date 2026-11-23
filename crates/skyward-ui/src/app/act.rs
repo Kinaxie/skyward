@@ -27,6 +27,9 @@ impl App {
     /// Carry out a tapped control.
     pub(super) fn act(&mut self, action: Action, now: u64) -> Vec<Effect> {
         let l = self.state.lang;
+        if self.state.new_folder_closing && matches!(action, Action::Type(_) | Action::NewFolderConfirm) {
+            return Vec::new();
+        }
         match action {
             Action::Open(s) => {
                 if s == Screen::Avb {
@@ -62,6 +65,7 @@ impl App {
                 self.refresh();
             }
             Action::Back | Action::CloseSearch => return self.back(now),
+            Action::Nothing => {}
             Action::Theme { dark } => {
                 if self.state.dark != dark {
                     self.state.dark = dark;
@@ -294,14 +298,72 @@ impl App {
                 if let Some(key) = SORT_KEYS.get(k).copied()
                     && self.state.sort != key
                 {
-                    self.state.sort = key;
-                    for screen in [Screen::Files, Screen::Choose(Place::Storage), Screen::Choose(Place::UsbDrive)] {
-                        if let Ok(entries) = &mut self.state.folder_mut(screen).entries {
-                            sort_rows(entries, key);
-                        }
-                    }
+                    self.set_sort(key, self.state.sort_desc);
+                }
+            }
+            Action::SortOrder(desc) => {
+                if self.state.sort_desc != desc {
+                    self.set_sort(self.state.sort, desc);
+                }
+            }
+            Action::FilesSearch => {
+                if self.screen() == Screen::Files {
+                    self.state.files_query.clear();
+                    self.state.files.set_query("");
+                    self.state.files_search = true;
+                    self.open(Screen::FileSearch);
+                }
+            }
+            Action::NewFolder => {
+                if self.screen() == Screen::Files {
+                    self.state.new_name = l.pick(texts::files::NEW_FOLDER).to_string();
+                    self.state.layer = Layer::Letters;
+                    self.state.new_folder = true;
+                    self.state.new_folder_closing = false;
+                    self.state.new_folder_default = true;
+                    self.state.new_folder_rise = 1000.0;
+                    self.folder_open = Some(Spring::new(now, 1000.0, 0.0, 0.26));
+                    self.folder_close = None;
+                    self.fling = None;
+                    self.bounce = None;
+                    self.seek = None;
+                    self.pull = 0.0;
                     self.refresh();
                 }
+            }
+            Action::NewFolderConfirm => return self.make_folder(now),
+            Action::OpenPlace(i) => {
+                let mut places = vec!["/sdcard"];
+                if self.state.usb_drive.is_some() {
+                    places.push(USB_DRIVE);
+                }
+                places.push("/");
+                if let Some(path) = places.get(i) {
+                    self.state.files_query.clear();
+                    self.state.files_search = false;
+                    self.state.new_folder = false;
+                    self.state.new_folder_closing = false;
+                    self.state.new_folder_default = false;
+                    self.state.new_name.clear();
+                    self.state.new_folder_rise = 0.0;
+                    self.folder_open = None;
+                    self.folder_close = None;
+                    self.leave(true);
+                    self.stack.pop();
+                    self.settle_page();
+                    return vec![Effect::ReadDir((*path).into())];
+                }
+            }
+            Action::CloseFilesSearch => {
+                if self.state.files_search {
+                    self.state.files_search = false;
+                    self.refresh();
+                }
+            }
+            Action::ClearFilesSearch => {
+                self.state.files_query.clear();
+                self.state.files.set_query("");
+                self.refresh();
             }
             Action::TimeZone(k) => {
                 self.state.time_zone = k;
@@ -400,6 +462,11 @@ impl App {
                     FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => {
                         let scroll = self.top().1;
                         self.state.files.leave(scroll);
+                        if self.screen() == Screen::FileSearch {
+                            self.leave(true);
+                            self.stack.pop();
+                            self.settle_page();
+                        }
                         return vec![Effect::ReadDir(self.state.files.inside(&entry.name))];
                     }
                     FileKind::File if matches!(files::file_type(&entry.name), FileType::Text | FileType::Code) => {
@@ -629,12 +696,62 @@ impl App {
         Vec::new()
     }
 
+    /// Put every folder the file manager shows in the same order.
+    fn set_sort(&mut self, key: SortKey, desc: bool) {
+        self.state.sort = key;
+        self.state.sort_desc = desc;
+        for screen in [
+            Screen::Files,
+            Screen::Choose(Place::Storage),
+            Screen::Choose(Place::UsbDrive),
+        ] {
+            self.state.folder_mut(screen).sort(key, desc);
+        }
+        self.refresh();
+    }
+
+    /// Make the folder the new-folder dialog names, accepting `/` for a
+    /// path below the folder shown or an absolute one.
+    fn make_folder(&mut self, now: u64) -> Vec<Effect> {
+        let l = self.state.lang;
+        let name = self.state.new_name.trim_end_matches('/').to_string();
+        let probe = name.trim_start_matches('/');
+        if probe.is_empty() {
+            self.say(l.pick(texts::toast::ENTER_NAME), now);
+            return Vec::new();
+        }
+        let valid = std::path::Path::new(probe)
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)));
+        if !valid {
+            self.say(l.pick(texts::files::NEW_FOLDER_NOTE), now);
+            return Vec::new();
+        }
+        let taken = !name.contains('/')
+            && self
+                .state
+                .files
+                .entries
+                .as_ref()
+                .is_ok_and(|entries| entries.iter().any(|e| e.name == name));
+        if taken {
+            self.say_taken(now);
+            return Vec::new();
+        }
+        vec![Effect::Mkdir { path: self.state.files.path.clone(), name }]
+    }
+
     /// The text the keyboard types into on this page.
     fn typing(&mut self) -> &mut String {
+        if self.state.new_folder {
+            return &mut self.state.new_name;
+        }
         match self.screen() {
             Screen::Search => &mut self.state.search,
+            Screen::Files => &mut self.state.files_query,
             Screen::Decrypt => &mut self.state.code,
             Screen::Rename => &mut self.state.new_name,
+            Screen::FileSearch => &mut self.state.files_query,
             Screen::WlanPassword => &mut self.state.password,
             Screen::WlanAdd => {
                 let a = self.state.adding.as_mut().expect("the page adds a network");
@@ -651,6 +768,13 @@ impl App {
     /// opens the first result of a search, and runs a terminal's command.
     fn type_key(&mut self, cap: Cap, now: u64) -> Vec<Effect> {
         let (l, layer) = (self.state.lang, self.state.layer);
+        if self.state.new_folder
+            && self.state.new_folder_default
+            && matches!(cap, Cap::Char(_) | Cap::Space | Cap::Backspace)
+        {
+            self.state.new_name.clear();
+            self.state.new_folder_default = false;
+        }
         match cap {
             Cap::Char(ch) => {
                 let shifted = self.state.layer == Layer::Shifted;
@@ -679,6 +803,14 @@ impl App {
                         return self.act(Action::Open(first.screen), now);
                     }
                 }
+                Screen::Files if self.state.new_folder => return self.make_folder(now),
+                Screen::Files => {
+                    self.state.files_search = false;
+                    self.state.files_query.clear();
+                    self.state.files.set_query("");
+                    self.refresh();
+                }
+                Screen::FileSearch => {}
                 Screen::Decrypt if self.state.code.is_empty() => self.say(l.pick(texts::toast::ENTER_LOCK), now),
                 Screen::Decrypt => {
                     let code = std::mem::take(&mut self.state.code);
@@ -749,7 +881,10 @@ impl App {
         }
         // What is typed shows above the keyboard, which stays as it was
         // while its keys do.
-        if matches!(cap, Cap::Char(_) | Cap::Space | Cap::Backspace) && self.state.layer == layer {
+        if matches!(self.screen(), Screen::Files | Screen::FileSearch) {
+            self.state.files.set_query(&self.state.files_query);
+            self.refresh();
+        } else if matches!(cap, Cap::Char(_) | Cap::Space | Cap::Backspace) && self.state.layer == layer {
             let t = self.theme();
             self.refresh_rows(0, (t.m.h as f32 - widgets::keyboard_height(&t)).floor() as u32);
         } else {

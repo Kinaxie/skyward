@@ -1244,6 +1244,11 @@ pub enum Glyph {
     Terminal,
     /// A tick: keep what was done.
     Done,
+    Search,
+    Plus,
+    Sort,
+    FolderPlus,
+    Sliders,
 }
 
 /// The centre and radius of the round button at the right end of the bar,
@@ -1259,9 +1264,93 @@ pub fn button_rect(t: &Theme) -> Rect {
     Rect::new(t.m.w as f32 - b.x - b.w, b.y, b.w, b.h)
 }
 
+/// Where tool `i` of `count` stands at the right of the bar, the rightmost
+/// last.
+pub fn tool_rect(t: &Theme, i: usize, count: usize) -> Rect {
+    let (cx, cy, _) = button_disc(t);
+    let step = t.m.dp(56.0);
+    let x = cx - (count.saturating_sub(1) - i) as f32 * step - step / 2.0;
+    Rect::new(x, cy - step / 2.0, step, step)
+}
+
+/// A tool's glyph in its place.
+pub fn tool_glyph(c: &mut Canvas, t: &Theme, glyph: Glyph, rect: Rect, color: Rgba) {
+    let (cx, cy) = rect.centre();
+    let sw = t.m.back_stroke;
+    let at = |x: f32, y: f32| (cx + t.m.dp(x), cy + t.m.dp(y));
+    match glyph {
+        Glyph::Search => {
+            let (icx, icy, ring) = (at(-1.0, -2.0).0, at(-1.0, -2.0).1, t.m.dp(7.0));
+            c.stroke_circle(icx, icy, ring, sw, color);
+            let k = ring * std::f32::consts::FRAC_1_SQRT_2;
+            c.line(icx + k, icy + k, at(8.0, 8.0).0, at(8.0, 8.0).1, sw, color);
+        }
+        Glyph::Plus => {
+            c.line(
+                at(0.0, -8.0).0,
+                at(0.0, -8.0).1,
+                at(0.0, 8.0).0,
+                at(0.0, 8.0).1,
+                sw,
+                color,
+            );
+            c.line(
+                at(-8.0, 0.0).0,
+                at(-8.0, 0.0).1,
+                at(8.0, 0.0).0,
+                at(8.0, 0.0).1,
+                sw,
+                color,
+            );
+        }
+        Glyph::Sort => {
+            for (y, half) in [(-6.0, 7.0), (0.0, 4.5), (6.0, 2.0)] {
+                c.line(
+                    at(-half, y).0,
+                    at(-half, y).1,
+                    at(half, y).0,
+                    at(half, y).1,
+                    sw,
+                    color,
+                );
+            }
+        }
+        Glyph::FolderPlus => {
+            let outline = [(-9.0, 7.0), (-9.0, -3.0), (-4.0, -3.0), (-2.0, -6.0), (9.0, -6.0), (9.0, 7.0), (-9.0, 7.0)];
+            for pair in outline.windows(2) {
+                let (ax, ay) = at(pair[0].0, pair[0].1);
+                let (bx, by) = at(pair[1].0, pair[1].1);
+                c.line(ax, ay, bx, by, sw, color);
+            }
+            let (px, py) = at(3.5, 1.5);
+            c.line(px, py - t.m.dp(4.0), px, py + t.m.dp(4.0), sw, color);
+            c.line(px - t.m.dp(4.0), py, px + t.m.dp(4.0), py, sw, color);
+        }
+        Glyph::Sliders => {
+            for (y, knob) in [(-4.0, -3.0), (4.0, 4.0)] {
+                c.line(at(-9.0, y).0, at(-9.0, y).1, at(9.0, y).0, at(9.0, y).1, sw, color);
+                let (kx, ky) = at(knob, y);
+                c.fill_circle(kx, ky, t.m.dp(2.2), color);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The chip behind that button, as the one behind `<`.
 pub fn button_chip(t: &Theme) -> (Canvas, i32, i32) {
     chip(t, button_disc(t))
+}
+
+/// The centre and radius of tool `i`, left of the terminal button.
+pub fn tool_disc(t: &Theme, i: usize, count: usize) -> (f32, f32, f32) {
+    let (cx, cy, r) = button_disc(t);
+    (cx - (count.saturating_sub(1) - i) as f32 * t.m.dp(56.0), cy, r)
+}
+
+/// The chip behind tool `i`, as the terminal button's.
+pub fn tool_chip(t: &Theme, i: usize, count: usize) -> (Canvas, i32, i32) {
+    chip(t, tool_disc(t, i, count))
 }
 
 /// The button's glyph, in strokes as heavy as the `<`'s.
@@ -1287,6 +1376,7 @@ fn glyph_at(c: &mut Canvas, t: &Theme, glyph: Glyph, dx: f32, dy: f32, color: Rg
             stroke(at(-8.0, 0.0), at(-2.5, 5.5));
             stroke(at(-2.5, 5.5), at(8.0, -5.5));
         }
+        Glyph::Search | Glyph::Plus | Glyph::Sort | Glyph::FolderPlus | Glyph::Sliders => {}
     }
 }
 
@@ -1520,19 +1610,43 @@ pub fn dock_bar(t: &Theme, f: &Fonts, bg: Rgba, labels: &[&str]) -> (Canvas, Vec
 /// for the card shows its end, where the cursor is. Returns where the card
 /// ends, and the cursor.
 pub fn text_field(c: &mut Canvas, t: &Theme, f: &Fonts, top: f32, text: &str) -> (f32, Caret) {
-    let at = draw_text_field(c, t, f, t.m.margin, top, text, false);
+    let w = t.m.w as f32 - t.m.margin * 2.0;
+    let at = draw_text_field(c, t, f, t.m.margin, w, top, text, false, t.pal.card, false);
     let caret = caret_over(at, |art, dx, dy| {
-        draw_text_field(art, t, f, t.m.margin - dx, top - dy, text, true);
+        draw_text_field(art, t, f, t.m.margin - dx, w, top - dy, text, true, t.pal.card, false);
+    });
+    (top + t.m.dp(56.0), caret)
+}
+
+/// A text field in the stock file manager's new-folder dialog: a grey card,
+/// with the name it offers selected while `selected`, so typing replaces it.
+#[allow(clippy::too_many_arguments)]
+pub fn text_field_dialog(c: &mut Canvas, t: &Theme, f: &Fonts, x: f32, w: f32, top: f32, text: &str, selected: bool) -> (f32, Caret) {
+    let at = draw_text_field(c, t, f, x, w, top, text, false, t.pal.search, selected);
+    let caret = caret_over(at, |art, dx, dy| {
+        draw_text_field(art, t, f, x - dx, w, top - dy, text, true, t.pal.search, selected);
     });
     (top + t.m.dp(56.0), caret)
 }
 
 /// Draw the text field's card from `x0`, `top`, with its cursor if
 /// `caret`; returns where the cursor is.
-fn draw_text_field(c: &mut Canvas, t: &Theme, f: &Fonts, x0: f32, top: f32, text: &str, caret: bool) -> Rect {
+#[allow(clippy::too_many_arguments)]
+fn draw_text_field(
+    c: &mut Canvas,
+    t: &Theme,
+    f: &Fonts,
+    x0: f32,
+    w: f32,
+    top: f32,
+    text: &str,
+    caret: bool,
+    fill: Rgba,
+    selected: bool,
+) -> Rect {
     let m = &t.m;
-    let (w, h) = (m.w as f32 - m.margin * 2.0, m.dp(56.0));
-    c.fill_round_rect(x0, top, w, h, m.card_radius, t.pal.card);
+    let h = m.dp(56.0);
+    c.fill_round_rect(x0, top, w, h, m.card_radius, fill);
     let (x, room) = (x0 + m.inner, w - m.inner * 2.0 - m.dp(4.0));
     let px = m.row_title_px;
     let mut shown = text;
@@ -1541,7 +1655,11 @@ fn draw_text_field(c: &mut Canvas, t: &Theme, f: &Fonts, x0: f32, top: f32, text
         rest.next();
         shown = rest.as_str();
     }
-    let at = cursor(t, f, x + c.text_width(&f.heading, shown, px), top + h / 2.0, px);
+    let text_w = c.text_width(&f.heading, shown, px);
+    if selected && !shown.is_empty() {
+        c.fill_rect(x - m.dp(2.0), top + h / 2.0 - m.dp(10.0), text_w + m.dp(4.0), m.dp(20.0), t.pal.accent.with_alpha(70));
+    }
+    let at = cursor(t, f, x + text_w, top + h / 2.0, px);
     if caret {
         c.fill_round_rect(at.x, at.y, at.w, at.h, m.dp(CARET_RADIUS_DP), t.pal.accent);
     }
@@ -2944,6 +3062,9 @@ const KEY_GAP_X_DP: f32 = 5.5;
 const KEY_WORD_INSET_DP: f32 = 8.0;
 const KEY_GAP_Y_DP: f32 = 11.0;
 const KEYBOARD_PAD_X_DP: f32 = 3.5;
+/// How wide the keys reach on a panel wider than a phone's, centred, so a
+/// tablet's keyboard does not stretch a key across a hand.
+const KEYBOARD_MAX_DP: f32 = 760.0;
 const KEYBOARD_TOP_DP: f32 = 9.0;
 /// The strip added above the keys for the key that folds the keyboard away.
 const KEYBOARD_HIDE_DP: f32 = 34.0;
@@ -2970,7 +3091,9 @@ pub fn keyboard_height(t: &Theme) -> f32 {
 #[allow(clippy::too_many_arguments)]
 pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: Layer, pressed: Option<Cap>, enter: &str, hide: bool) -> Vec<(Rect, Cap)> {
     let m = &t.m;
-    let w = m.w as f32;
+    let screen_w = m.w as f32;
+    let w = screen_w.min(m.dp(KEYBOARD_MAX_DP));
+    let x0 = (screen_w - w) / 2.0;
     let (panel, key, side, ink, shadow) = if t.dark {
         (Rgba::rgb(18, 18, 18), Rgba::rgb(58, 58, 58), Rgba::rgb(38, 38, 38), Rgba::rgb(237, 237, 237), Rgba::rgb(0, 0, 0))
     } else {
@@ -2979,7 +3102,7 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     // A keyboard that folds away carries a narrow strip above its keys,
     // with the key that folds it at the right.
     let strip = if hide { m.dp(KEYBOARD_HIDE_DP) } else { 0.0 };
-    c.fill_rect(0.0, top - strip, w, keyboard_height(t) + strip, panel);
+    c.fill_rect(0.0, top - strip, screen_w, keyboard_height(t) + strip, panel);
     let (pad, gx, gy, kh) = (m.dp(KEYBOARD_PAD_X_DP), m.dp(KEY_GAP_X_DP), m.dp(KEY_GAP_Y_DP), m.dp(KEY_H_DP));
     let kw = (w - pad * 2.0 - gx * 9.0) / 10.0;
     let side_w = kw * 1.35;
@@ -2988,15 +3111,15 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     let [first, second, third] = rows(layer);
     // Rows of plain keys are centred: the letters' second row sits half a
     // key in, as on any phone keyboard.
-    let centred = |n: usize, width: f32| (w - (n as f32 * width + (n as f32 - 1.0) * gx)) / 2.0;
+    let centred = |n: usize, width: f32| x0 + (w - (n as f32 * width + (n as f32 - 1.0) * gx)) / 2.0;
     for (r, row) in [first, second].iter().enumerate() {
         let n = row.chars().count();
-        let x0 = centred(n, kw);
+        let row_x = centred(n, kw);
         for (k, ch) in row.chars().enumerate() {
-            keys.push((Rect::new(x0 + k as f32 * (kw + gx), row_top(r), kw, kh), Cap::Char(ch)));
+            keys.push((Rect::new(row_x + k as f32 * (kw + gx), row_top(r), kw, kh), Cap::Char(ch)));
         }
     }
-    let (left, right) = (pad, w - pad - side_w);
+    let (left, right) = (x0 + pad, x0 + w - pad - side_w);
     let shift = match layer {
         Layer::Letters | Layer::Shifted => Cap::Shift,
         Layer::Digits => Cap::Show(Layer::Symbols),
@@ -3006,9 +3129,9 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     let n = third.chars().count();
     let room = right - gx * 2.0 - (left + side_w + gx * 2.0);
     let mid_w = ((room - (n as f32 - 1.0) * gx) / n as f32).min(kw * 1.4);
-    let x0 = centred(n, mid_w);
+    let row_x = centred(n, mid_w);
     for (k, ch) in third.chars().enumerate() {
-        keys.push((Rect::new(x0 + k as f32 * (mid_w + gx), row_top(2), mid_w, kh), Cap::Char(ch)));
+        keys.push((Rect::new(row_x + k as f32 * (mid_w + gx), row_top(2), mid_w, kh), Cap::Char(ch)));
     }
     keys.push((Rect::new(right, row_top(2), side_w, kh), Cap::Backspace));
     let switch = match layer {
@@ -3020,16 +3143,16 @@ pub fn keyboard(c: &mut Canvas, t: &Theme, f: &Fonts, l: Lang, top: f32, layer: 
     let inset = m.dp(KEY_WORD_INSET_DP);
     let enter_w = (c.text_width(&f.heading, enter, m.sub_px) + inset * 2.0).clamp(kw * 2.2, kw * 3.6);
     let space_x = left + side_w + gx + kw + gx;
-    let space_w = w - pad - enter_w - gx - kw - gx - space_x;
+    let space_w = x0 + w - pad - enter_w - gx - kw - gx - space_x;
     keys.push((Rect::new(left, row_top(3), side_w, kh), switch));
     keys.push((Rect::new(left + side_w + gx, row_top(3), kw, kh), Cap::Char(',')));
     keys.push((Rect::new(space_x, row_top(3), space_w, kh), Cap::Space));
     keys.push((Rect::new(space_x + space_w + gx, row_top(3), kw, kh), Cap::Char('.')));
-    keys.push((Rect::new(w - pad - enter_w, row_top(3), enter_w, kh), Cap::Enter));
+    keys.push((Rect::new(x0 + w - pad - enter_w, row_top(3), enter_w, kh), Cap::Enter));
     if hide {
         let key_w = m.dp(KEYBOARD_HIDE_KEY_W_DP);
         let key_h = strip - m.dp(8.0);
-        keys.push((Rect::new(w - pad - key_w, top - strip + m.dp(4.0), key_w, key_h), Cap::Hide));
+        keys.push((Rect::new(x0 + w - pad - key_w, top - strip + m.dp(4.0), key_w, key_h), Cap::Hide));
     }
 
     let radius = m.dp(KEY_RADIUS_DP);

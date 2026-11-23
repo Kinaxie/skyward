@@ -1,12 +1,12 @@
 use crate::app::{
-    BackupRefusal, Data, EraseStop, FileKind, FileRow, ItemEnd, MountFailure, Part, PartKind, PartStop, Place, SortKey, Source, TermEnd,
-    BACKUP_PARTS, TIME_ZONES,
+    BACKUP_PARTS,
+    BackupRefusal, Data, EraseStop, FileKind, FileRow, ItemEnd, MountFailure, Part, PartKind, PartStop, Place, SortKey, Source, TIME_ZONES, TermEnd,
 };
 use crate::lang::{Lang, Text};
 use crate::texts;
+use jiff::Timestamp;
 use jiff::civil::{DateTime, Weekday};
 use jiff::tz::TimeZone;
-use jiff::Timestamp;
 use skyward_info::{Battery, Charge, Cpu, PatchLevel, Storage};
 use skyward_install::ota::Trouble;
 use skyward_install::{Failure, ImageKind, Ramdisk, Refusal};
@@ -1206,6 +1206,7 @@ pub fn sort_name(l: Lang, key: SortKey) -> &'static str {
         SortKey::Name => l.pick(texts::local::SORT_NAME),
         SortKey::Size => l.pick(texts::local::SORT_SIZE),
         SortKey::Modified => l.pick(texts::local::SORT_MODIFIED),
+        SortKey::Kind => l.pick(texts::local::SORT_KIND),
     }
 }
 
