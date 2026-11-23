@@ -102,7 +102,7 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 小米 14 Ultra | `aurora` | OS3.0.308.0.WNACNXM（Android 16） |
 | 🚧 小米 15 | `dada` | OS4.0.4.0.XOCCNXM（Android 17） |
 | 🚧 小米 15 Pro | `haotian` | OS4.0.4.0.XOBCNXM（Android 17） |
-| 🚧 小米 15 Ultra | `xuanyuan` | OS3.0.314.0.WOACNXM（Android 16） |
+| 🚧 小米 15 Ultra | `xuanyuan` | OS4.0.4.0.XOACNXM（Android 17） |
 | 🚧 小米 17 | `pudding` | OS4.0.4.0.XPCCNXM（Android 17） |
 | 🚧 小米 17 Pro | `pandora` | OS4.0.4.0.XBLCNXM（Android 17） |
 | 🚧 小米 17 Pro Max | `popsicle` | OS4.0.4.0.XPBCNXM（Android 17） |
