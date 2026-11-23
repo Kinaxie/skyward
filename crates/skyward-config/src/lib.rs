@@ -897,7 +897,7 @@ mod tests {
             (include_str!("../../../devices/zorn.toml"), "OS3.0.309.0.WOKCNXM"),
             (include_str!("../../../devices/miro.toml"), "OS4.0.3.0.XOMCNXM"),
             (include_str!("../../../devices/annibale.toml"), "OS4.0.6.0.XPKCNXM"),
-            (include_str!("../../../devices/warsaw.toml"), "OS3.0.309.0.WHPCNXM"),
+            (include_str!("../../../devices/warsaw.toml"), "OS4.0.8.0.XHPCNXM"),
             (include_str!("../../../devices/onyx.toml"), "OS4.0.4.0.XOLCNXM"),
             (include_str!("../../../devices/mondrian.toml"), "OS3.0.8.0.VMNCNXM"),
             (include_str!("../../../devices/manet.toml"), "OS3.0.307.0.WNMCNXM"),
