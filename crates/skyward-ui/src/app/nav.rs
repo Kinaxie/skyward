@@ -105,6 +105,7 @@ impl App {
                 self.state.new_folder = false;
                 self.state.new_folder_closing = false;
                 self.state.new_folder_default = false;
+                self.state.new_folder_cursor = 0;
                 self.state.new_name.clear();
                 self.state.new_folder_rise = 0.0;
                 self.folder_open = None;
@@ -145,6 +146,7 @@ impl App {
                 self.state.new_folder = false;
                 self.state.new_folder_closing = false;
                 self.state.new_folder_default = false;
+                self.state.new_folder_cursor = 0;
                 self.state.new_name.clear();
                 self.state.new_folder_rise = 0.0;
                 self.folder_open = None;

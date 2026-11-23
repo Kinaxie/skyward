@@ -350,6 +350,8 @@ pub enum Action {
     NewFolder,
     /// Make the folder the file manager's dialog names.
     NewFolderConfirm,
+    /// Put the dialog's cursor at this byte of the name.
+    MoveCaret(usize),
     /// Show the file manager at one of the places it can start from.
     OpenPlace(usize),
     /// Open the file manager's entry at this place in the folder: a folder
@@ -1681,6 +1683,7 @@ impl App {
                 self.state.new_folder = false;
                 self.state.new_folder_closing = false;
                 self.state.new_folder_default = false;
+                self.state.new_folder_cursor = 0;
                 self.state.new_name.clear();
                 self.refresh();
             }

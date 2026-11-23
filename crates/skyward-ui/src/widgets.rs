@@ -1611,26 +1611,46 @@ pub fn dock_bar(t: &Theme, f: &Fonts, bg: Rgba, labels: &[&str]) -> (Canvas, Vec
 /// ends, and the cursor.
 pub fn text_field(c: &mut Canvas, t: &Theme, f: &Fonts, top: f32, text: &str) -> (f32, Caret) {
     let w = t.m.w as f32 - t.m.margin * 2.0;
-    let at = draw_text_field(c, t, f, t.m.margin, w, top, text, false, t.pal.card, false);
-    let caret = caret_over(at, |art, dx, dy| {
-        draw_text_field(art, t, f, t.m.margin - dx, w, top - dy, text, true, t.pal.card, false);
+    let cursor = text.len();
+    let art = draw_text_field(c, t, f, t.m.margin, w, top, text, false, t.pal.card, false, cursor);
+    let caret = caret_over(art.caret, |art, dx, dy| {
+        draw_text_field(art, t, f, t.m.margin - dx, w, top - dy, text, true, t.pal.card, false, cursor);
     });
     (top + t.m.dp(56.0), caret)
 }
 
 /// A text field in the stock file manager's new-folder dialog: a grey card,
 /// with the name it offers selected while `selected`, so typing replaces it.
+/// `cursor` is the byte where its caret stands; the hits put a tap at a
+/// byte of the name.
 #[allow(clippy::too_many_arguments)]
-pub fn text_field_dialog(c: &mut Canvas, t: &Theme, f: &Fonts, x: f32, w: f32, top: f32, text: &str, selected: bool) -> (f32, Caret) {
-    let at = draw_text_field(c, t, f, x, w, top, text, false, t.pal.search, selected);
-    let caret = caret_over(at, |art, dx, dy| {
-        draw_text_field(art, t, f, x - dx, w, top - dy, text, true, t.pal.search, selected);
+pub fn text_field_dialog(
+    c: &mut Canvas,
+    t: &Theme,
+    f: &Fonts,
+    x: f32,
+    w: f32,
+    top: f32,
+    text: &str,
+    selected: bool,
+    cursor: usize,
+) -> (f32, Caret, Vec<(Rect, usize)>) {
+    let art = draw_text_field(c, t, f, x, w, top, text, false, t.pal.search, selected, cursor);
+    let caret = caret_over(art.caret, |art, dx, dy| {
+        draw_text_field(art, t, f, x - dx, w, top - dy, text, true, t.pal.search, selected, cursor);
     });
-    (top + t.m.dp(56.0), caret)
+    (top + t.m.dp(56.0), caret, art.hits)
+}
+
+/// What a drawn text field leaves for the page: its caret and the stretches
+/// of its name a tap puts the caret at.
+struct TextFieldArt {
+    caret: Rect,
+    hits: Vec<(Rect, usize)>,
 }
 
 /// Draw the text field's card from `x0`, `top`, with its cursor if
-/// `caret`; returns where the cursor is.
+/// `caret`; returns where the cursor is and what its text answers.
 #[allow(clippy::too_many_arguments)]
 fn draw_text_field(
     c: &mut Canvas,
@@ -1643,28 +1663,78 @@ fn draw_text_field(
     caret: bool,
     fill: Rgba,
     selected: bool,
-) -> Rect {
+    byte: usize,
+) -> TextFieldArt {
     let m = &t.m;
     let h = m.dp(56.0);
     c.fill_round_rect(x0, top, w, h, m.card_radius, fill);
     let (x, room) = (x0 + m.inner, w - m.inner * 2.0 - m.dp(4.0));
     let px = m.row_title_px;
-    let mut shown = text;
-    while c.text_width(&f.heading, shown, px) > room {
-        let mut rest = shown.chars();
-        rest.next();
-        shown = rest.as_str();
-    }
+    let at_byte = byte.min(text.len());
+    let at_byte = (0..=at_byte).rev().find(|&at| text.is_char_boundary(at)).unwrap_or(0);
+    let (start, shown, caret_x) = visible_text(c, &f.heading, px, room, text, at_byte, m.dp(6.0));
     let text_w = c.text_width(&f.heading, shown, px);
     if selected && !shown.is_empty() {
         c.fill_rect(x - m.dp(2.0), top + h / 2.0 - m.dp(10.0), text_w + m.dp(4.0), m.dp(20.0), t.pal.accent.with_alpha(70));
     }
-    let at = cursor(t, f, x + text_w, top + h / 2.0, px);
+    let at = cursor(t, f, x + caret_x, top + h / 2.0, px);
     if caret {
         c.fill_round_rect(at.x, at.y, at.w, at.h, m.dp(CARET_RADIUS_DP), t.pal.accent);
     }
     c.text_vc(&f.heading, shown, x, top + h / 2.0, px, t.pal.text, None);
-    at
+    let mut hits = Vec::new();
+    let inner = x;
+    let inner_right = x0 + w - m.inner;
+    hits.push((Rect::new(x0, top, inner - x0, h), start));
+    let mut at_x = 0.0;
+    for (i, ch) in shown.char_indices() {
+        let width = c.text_width(&f.heading, &shown[i..i + ch.len_utf8()], px);
+        if width <= 0.0 {
+            continue;
+        }
+        let mid = at_x + width / 2.0;
+        let index = start + i;
+        hits.push((Rect::new(inner + at_x, top, mid - at_x, h), index));
+        hits.push((Rect::new(inner + mid, top, at_x + width - mid, h), index + ch.len_utf8()));
+        at_x += width;
+    }
+    hits.push((Rect::new(inner + at_x, top, (inner_right - inner - at_x).max(0.0), h), text.len()));
+    if shown.is_empty() {
+        hits.push((Rect::new(x0, top, w, h), start));
+    }
+    TextFieldArt { caret: at, hits }
+}
+
+/// The part of `text` a field of `room` shows with its cursor at `cursor`,
+/// and where that cursor is in it: the end if the text fits, else the
+/// stretch that keeps the cursor in view.
+fn visible_text<'a>(
+    c: &Canvas,
+    face: &Face,
+    px: f32,
+    room: f32,
+    text: &'a str,
+    cursor: usize,
+    pad: f32,
+) -> (usize, &'a str, f32) {
+    if c.text_width(face, text, px) <= room {
+        return (0, text, c.text_width(face, &text[..cursor], px));
+    }
+    let mut start = cursor;
+    let mut width = 0.0;
+    for (i, ch) in text[..cursor].char_indices().rev() {
+        let char_width = c.text_width(face, &text[i..i + ch.len_utf8()], px);
+        if width + char_width > room - pad {
+            break;
+        }
+        width += char_width;
+        start = i;
+    }
+    let mut end = text.len();
+    while end > start && c.text_width(face, &text[start..end], px) > room {
+        end = text[start..end].char_indices().next_back().map_or(start, |(i, _)| start + i);
+    }
+    (start, &text[start..end], c.text_width(face, &text[start..cursor], px))
 }
 
 /// A full-width button in the accent colour, for a page's one action that

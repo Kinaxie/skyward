@@ -439,6 +439,7 @@ impl App {
             self.state.new_folder = false;
             self.state.new_folder_closing = false;
             self.state.new_folder_default = false;
+            self.state.new_folder_cursor = 0;
             self.state.new_name.clear();
             self.state.new_folder_rise = 0.0;
             self.folder_open = None;
@@ -635,6 +636,29 @@ mod tests {
 
         app.tick(2000);
         assert!(!app.state.new_folder);
+    }
+
+    #[test]
+    fn a_tap_in_the_new_folder_name_puts_the_cursor_there() {
+        let (f, i) = (fonts(), info());
+        let mut app = in_sdcard(&f, &i);
+        tap(&mut app, &f, &i, Action::NewFolder);
+        app.tick(1000);
+        app.frame(&f, &i);
+        let default = app.state.new_name.clone();
+        assert_eq!(app.state.new_folder_cursor, default.len());
+
+        tap(&mut app, &f, &i, Action::MoveCaret(0));
+        assert_eq!(app.state.new_folder_cursor, 0);
+        assert!(!app.state.new_folder_default, "the offered name is no longer selected");
+        type_text(&mut app, &f, &i, "a");
+        assert_eq!(app.state.new_name, format!("a{default}"));
+        assert_eq!(app.state.new_folder_cursor, 1);
+
+        tap(&mut app, &f, &i, Action::MoveCaret(4));
+        type_text(&mut app, &f, &i, "b");
+        assert_eq!(app.state.new_name, "a新b建文件夹");
+        assert_eq!(app.state.new_folder_cursor, 5);
     }
 
     #[test]

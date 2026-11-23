@@ -522,6 +522,7 @@ pub fn new_folder_dialog(
     closing: bool,
     selected: bool,
     text: &str,
+    cursor: usize,
 ) -> (Dialog, widgets::Caret) {
     let m = &t.m;
     let screen_w = m.w as f32;
@@ -543,7 +544,10 @@ pub fn new_folder_dialog(
         .min(rest_top - card_h - m.margin)
         .max(m.margin);
     let card_y = rest_y + rise * (screen_h - rest_y) / (screen_h - rest_top).max(1.0);
-    c.fill_round_rect(card_x, card_y, card_w, card_h, m.dp(24.0), t.pal.card);
+    let radius = m.dp(24.0);
+    c.fill_rect(card_x + radius, card_y, card_w - radius * 2.0, card_h, t.pal.card);
+    c.fill_rect(card_x, card_y + radius, card_w, card_h - radius * 2.0, t.pal.card);
+    c.fill_round_rect(card_x, card_y, card_w, card_h, radius, t.pal.card);
     c.text_center(
         &f.heading,
         l.pick(texts::files::NEW_FOLDER),
@@ -555,7 +559,7 @@ pub fn new_folder_dialog(
     let field_x = card_x + m.inner;
     let field_w = card_w - m.inner * 2.0;
     let field_top = card_y + m.dp(64.0);
-    let (_, caret) = widgets::text_field_dialog(&mut c, t, f, field_x, field_w, field_top, text, selected);
+    let (_, caret, text_hits) = widgets::text_field_dialog(&mut c, t, f, field_x, field_w, field_top, text, selected, cursor);
     c.stroke_round_rect(
         field_x,
         field_top,
@@ -630,6 +634,10 @@ pub fn new_folder_dialog(
     hits.extend(keys.into_iter().map(|(rect, cap)| Hit {
         rect,
         action: Action::Type(cap),
+    }));
+    hits.extend(text_hits.into_iter().map(|(rect, at)| Hit {
+        rect,
+        action: Action::MoveCaret(at),
     }));
     hits.push(Hit {
         rect: Rect::new(card_x, card_y, card_w, card_h),

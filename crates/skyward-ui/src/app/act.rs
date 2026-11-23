@@ -27,7 +27,9 @@ impl App {
     /// Carry out a tapped control.
     pub(super) fn act(&mut self, action: Action, now: u64) -> Vec<Effect> {
         let l = self.state.lang;
-        if self.state.new_folder_closing && matches!(action, Action::Type(_) | Action::NewFolderConfirm) {
+        if self.state.new_folder_closing
+            && matches!(action, Action::Type(_) | Action::MoveCaret(_) | Action::NewFolderConfirm)
+        {
             return Vec::new();
         }
         match action {
@@ -328,6 +330,7 @@ impl App {
             Action::NewFolder => {
                 if self.screen() == Screen::Files {
                     self.state.new_name = l.pick(texts::files::NEW_FOLDER).to_string();
+                    self.state.new_folder_cursor = self.state.new_name.len();
                     self.state.layer = Layer::Letters;
                     self.state.new_folder = true;
                     self.state.new_folder_closing = false;
@@ -343,6 +346,18 @@ impl App {
                 }
             }
             Action::NewFolderConfirm => return self.make_folder(now),
+            Action::MoveCaret(at) => {
+                if self.state.new_folder && !self.state.new_folder_closing {
+                    let mut at = at.min(self.state.new_name.len());
+                    while at > 0 && !self.state.new_name.is_char_boundary(at) {
+                        at -= 1;
+                    }
+                    self.state.new_folder_default = false;
+                    self.state.new_folder_cursor = at;
+                    self.edits += 1;
+                    self.refresh();
+                }
+            }
             Action::OpenPlace(i) => {
                 let mut places = vec!["/sdcard"];
                 if self.state.usb_drive.is_some() {
@@ -355,6 +370,7 @@ impl App {
                     self.state.new_folder = false;
                     self.state.new_folder_closing = false;
                     self.state.new_folder_default = false;
+                    self.state.new_folder_cursor = 0;
                     self.state.new_name.clear();
                     self.state.new_folder_rise = 0.0;
                     self.folder_open = None;
@@ -785,23 +801,45 @@ impl App {
             && matches!(cap, Cap::Char(_) | Cap::Space | Cap::Backspace)
         {
             self.state.new_name.clear();
+            self.state.new_folder_cursor = 0;
             self.state.new_folder_default = false;
         }
         match cap {
             Cap::Char(ch) => {
                 let shifted = self.state.layer == Layer::Shifted;
-                self.typing().push(if shifted { ch.to_ascii_uppercase() } else { ch });
+                if self.state.new_folder {
+                    let ch = if shifted { ch.to_ascii_uppercase() } else { ch };
+                    let at = self.state.new_folder_cursor.min(self.state.new_name.len());
+                    self.state.new_name.insert(at, ch);
+                    self.state.new_folder_cursor = at + ch.len_utf8();
+                } else {
+                    self.typing().push(if shifted { ch.to_ascii_uppercase() } else { ch });
+                }
                 self.edits += 1;
                 if shifted {
                     self.state.layer = Layer::Letters;
                 }
             }
             Cap::Space => {
-                self.typing().push(' ');
+                if self.state.new_folder {
+                    let at = self.state.new_folder_cursor.min(self.state.new_name.len());
+                    self.state.new_name.insert(at, ' ');
+                    self.state.new_folder_cursor = at + 1;
+                } else {
+                    self.typing().push(' ');
+                }
                 self.edits += 1;
             }
             Cap::Backspace => {
-                self.typing().pop();
+                if self.state.new_folder {
+                    let at = self.state.new_folder_cursor.min(self.state.new_name.len());
+                    if let Some((prev, _)) = self.state.new_name[..at].char_indices().next_back() {
+                        self.state.new_name.replace_range(prev..at, "");
+                        self.state.new_folder_cursor = prev;
+                    }
+                } else {
+                    self.typing().pop();
+                }
                 self.edits += 1;
             }
             Cap::Shift => {

@@ -178,6 +178,8 @@ pub struct State {
     /// What is typed as an entry's new name, and whether the file manager's
     /// new-folder dialog is up over it, and how far it still has to rise.
     pub new_name: String,
+    /// Where the cursor stands in `new_name`, as a byte index.
+    pub new_folder_cursor: usize,
     pub new_folder: bool,
     pub new_folder_closing: bool,
     pub new_folder_default: bool,
@@ -317,6 +319,7 @@ impl Default for State {
             asked: Asked::default(),
             clip: None,
             new_name: String::new(),
+            new_folder_cursor: 0,
             new_folder: false,
             new_folder_closing: false,
             new_folder_default: false,

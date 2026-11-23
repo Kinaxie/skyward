@@ -2982,6 +2982,7 @@ pub fn files(cx: &Ctx) -> Frame {
             s.new_folder_closing,
             s.new_folder_default,
             &s.new_name,
+            s.new_folder_cursor,
         );
         frame.dialog = Some(dialog);
         frame.caret = Some(caret);
