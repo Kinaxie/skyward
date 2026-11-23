@@ -46,8 +46,9 @@ probe = "http://connect.rom.miui.com/generate_204"
 server = "https://update.miui.com/updates/miotaV3.php"
 
 [stock]
-version = "OS2.0.216.0.VOLCNXM"
-recovery = "e00171fd6be545f9c0301a0ac35abdd7ba4d3c20aeb05f6b9bc190090fb669a7"
+version = "OS4.0.4.0.XOLCNXM"
+package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS4.0.4.0.XOLCNXM/onyx-ota_full-OS4.0.4.0.XOLCNXM-user-17.0-0343091c69.zip"
+recovery = "5d4f69dde74c49ae852e6d6d68f9e7824afbcd3ab27a7061db4787520b15b95a"
 
 [haptics]
 resonance = "/sys/class/qcom-haptics/lra_frequency_hz"

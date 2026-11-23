@@ -131,7 +131,7 @@ not been verified.
 | 🚧 REDMI K60 | `mondrian` | OS2.0.6.0.VMNEUXM (Android 15) |
 | 🚧 REDMI K70 | `vermeer` | OS3.0.307.0.WNKCNXM (Android 16) |
 | 🚧 REDMI K70 Pro | `manet` | — (no stock package in the configuration) |
-| 🚧 REDMI Turbo 4 Pro | `onyx` | OS2.0.216.0.VOLCNXM (Android 15) |
+| 🚧 REDMI Turbo 4 Pro | `onyx` | OS4.0.4.0.XOLCNXM (Android 17) |
 | 🚧 Xiaomi Pad 6S Pro 12.4 | `sheng` | OS3.0.303.0.WNXCNXM (Android 16) |
 | 🚧 Xiaomi Pad 7 Pro | `muyu` | OS4.0.3.0.XOYCNXM (Android 17) |
 | 🚧 Xiaomi Pad 8 Pro | `piano` | OS4.0.6.0.XPYCNXM (Android 17) |
