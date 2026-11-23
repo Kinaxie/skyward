@@ -162,9 +162,9 @@ server = "https://update.miui.com/updates/miotaV3.php"
 
 # The stock build the recovery is made on: OS3.0.8.0.VMNCNXM.
 [stock]
-version = "OS2.0.6.0.VMNEUXM"
-package = "https://bigota.d.miui.com/OS2.0.6.0.VMNEUXM/mondrian_eea_global-ota_full-OS2.0.6.0.VMNEUXM-user-15.0-c74dab42b3.zip"
-recovery = "19493b0e9b5cadbceda76ac602b62117070bf2eb52bc3b3a4e39d7744b48dcc5"
+version = "OS3.0.8.0.VMNCNXM"
+package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS3.0.8.0.VMNCNXM/mondrian-ota_full-OS3.0.8.0.VMNCNXM-user-15.0-3fb07519a6.zip"
+recovery = "38c7a26bdbb9647372552156ee62f2ae79971184e7623dcb37190bb90b73e230"
 
 # qcom-hv-haptics.
 [haptics]

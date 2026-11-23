@@ -128,7 +128,7 @@ not been verified.
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
 | 🚧 Xiaomi 12S Pro | `unicorn` | OS3.0.4.0.VLECNXM (Android 15) |
 | 🚧 REDMI K50 Ultra | `diting` | OS3.0.2.0.VLFCNXM (Android 15) |
-| 🚧 REDMI K60 | `mondrian` | OS2.0.6.0.VMNEUXM (Android 15) |
+| 🚧 REDMI K60 | `mondrian` | OS3.0.8.0.VMNCNXM (Android 15) |
 | 🚧 REDMI K70 | `vermeer` | OS3.0.307.0.WNKCNXM (Android 16) |
 | 🚧 REDMI K70 Pro | `manet` | — (no stock package in the configuration) |
 | 🚧 REDMI Turbo 4 Pro | `onyx` | OS4.0.4.0.XOLCNXM (Android 17) |
