@@ -118,7 +118,7 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K50 Ultra | `diting` | OS3.0.2.0.VLFCNXM（Android 15） |
 | 🚧 REDMI K60 | `mondrian` | OS3.0.8.0.VMNCNXM（Android 15） |
 | 🚧 REDMI K70 | `vermeer` | OS3.0.307.0.WNKCNXM（Android 16） |
-| 🚧 REDMI K70 Pro | `manet` | —（配置未带 stock 包） |
+| 🚧 REDMI K70 Pro | `manet` | OS3.0.307.0.WNMCNXM（Android 16） |
 | 🚧 REDMI Turbo 4 Pro | `onyx` | OS4.0.4.0.XOLCNXM（Android 17） |
 | 🚧 小米平板 6S Pro 12.4 | `sheng` | OS3.0.303.0.WNXCNXM（Android 16） |
 | 🚧 小米平板 7 Pro | `muyu` | OS4.0.3.0.XOYCNXM（Android 17） |

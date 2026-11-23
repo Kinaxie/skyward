@@ -93,6 +93,12 @@ open_data = true
 [update]
 server = "https://update.miui.com/updates/miotaV3.php"
 
+# The stock build the recovery is made on: the Chinese system's OS3.0.307.0.WNMCNXM.
+[stock]
+version = "OS3.0.307.0.WNMCNXM"
+package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS3.0.307.0.WNMCNXM/manet-ota_full-OS3.0.307.0.WNMCNXM-user-16.0-01c57af24f.zip"
+recovery = "f436c69ac47cd99a08b2cd88be94296408c1b5db98ed8093fe2181929a7da5b1"
+
 # qcom-hv-haptics (qcom,hv-haptics in its dtbo), whose driver says the
 # motor's resonant frequency in /sys/class/qcom-haptics/lra_frequency_hz as
 # the K80's does; the click is made from samples at that frequency, and the
