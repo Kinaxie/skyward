@@ -443,6 +443,12 @@ pub struct Service {
     /// names it: it keeps these alone, through its change of user.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The program is passed over where it is not in the partition, and
+    /// where it does not become what it says it will be, so that a phone
+    /// whose vendor keeps either of two builds of a service still starts
+    /// the one it has and the rest after it.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 /// The kernel's capabilities, by the names init's capabilities lines give

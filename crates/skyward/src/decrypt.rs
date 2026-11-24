@@ -54,6 +54,29 @@ impl Decryptor {
     }
 }
 
+
+/// What the phone holds where the key service is reached, said beside why
+/// it was not: which programs of the service directories run, and where
+/// their own programs are.
+fn key_diagnostics() -> String {
+    let running = |name: &str| {
+        std::fs::read_dir("/proc").ok().into_iter().flatten().flatten().any(|e| {
+            e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit())
+                && std::fs::read(e.path().join("cmdline")).is_ok_and(|b| String::from_utf8_lossy(&b).contains(name))
+        })
+    };
+    let at = |path: &str| if std::path::Path::new(path).is_file() { "有" } else { "无" };
+    format!(
+        "\n[binder={} servicemanager={} hwservicemanager={} keymint={} 服务目录={} keymint程序={}]",
+        if std::path::Path::new("/dev/binder").exists() { "有" } else { "无" },
+        if running("servicemanager") { "运行" } else { "无" },
+        if running("hwservicemanager") { "运行" } else { "无" },
+        if running("keymint") { "运行" } else { "无" },
+        at("/mnt/system/bin/servicemanager"),
+        at("/vendor/bin/hw/android.hardware.security.keymint-service-qti"),
+    )
+}
+
 /// Do `work` with the phone's key service, reached afresh for it, and say
 /// why it failed in words for the page.
 pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T, String> {
@@ -62,7 +85,7 @@ pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T
         let service = KeyMint::open(&binder)?;
         work(&service)
     })();
-    done.map_err(|e| format!("{e:#}"))
+    done.map_err(|e| format!("{e:#}{}", key_diagnostics()))
 }
 
 /// Do `work` with what reaching the data partition takes: the phone's key
@@ -79,5 +102,5 @@ pub fn with_data_keys<T>(work: impl FnOnce(Option<&KeyMint>) -> Result<T>) -> Re
         let service = KeyMint::open(&binder)?;
         work(Some(&service))
     })();
-    done.map_err(|e| format!("{e:#}"))
+    done.map_err(|e| format!("{e:#}{}", key_diagnostics()))
 }

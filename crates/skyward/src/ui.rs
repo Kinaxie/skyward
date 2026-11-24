@@ -24,6 +24,7 @@ use skyward_crypto::data::{Closed, Opened};
 use skyward_files::Ownership;
 use skyward_install::asked::{self, Needs};
 use skyward_install::{Detach, Installer, Options};
+use skyward_modules::root as root_modules;
 use skyward_net::download::{self, Failure};
 use skyward_net::http::Servers;
 use skyward_net::release::{Installed, Release, Unanswered};
@@ -1048,13 +1049,60 @@ fn read_mounts(services: &[Service]) -> Result<Vec<skyward_ui::app::MountRow>> {
 
 /// What the phone's boot control holds of the slots, or why it cannot be
 /// asked.
+fn root_module_data(app: &App) -> Result<PathBuf> {
+    let data = Path::new(skyward_crypto::data::MOUNT);
+    ensure!(app.state.place_open(Place::Storage) && mount::is_mount_point(data)?, "decrypt the data partition first");
+    Ok(data.join("adb"))
+}
+
+fn read_root_modules(app: &App) -> Result<Vec<root_modules::Module>, String> {
+    root_module_data(app).and_then(|adb| root_modules::list(&adb, Path::new("/metadata"))).map_err(|e| format!("{e:#}"))
+}
+
+/// Whether the bootloader lets what it is given be written: the state it
+/// left the phone in, or the colour it booted in where it names no state —
+/// orange is a phone whose own keys it no longer checks, which is what
+/// unlocking it makes.
+fn bootloader_unlocked() -> bool {
+    let param = |key: &str| skyward_block::boot_param(key).ok().flatten();
+    if param("androidboot.flash.locked").as_deref() == Some("0") {
+        return true;
+    }
+    if param("androidboot.vbmeta.device_state").as_deref() == Some("unlocked") {
+        return true;
+    }
+    matches!(param("androidboot.verifiedbootstate").as_deref(), Some("orange") | Some("red"))
+}
+
+/// What the recovery has where the phone's own services register, said
+/// beside why they did not answer: which of them run, and whether the
+/// installed system they are started from is mounted.
+fn services_state() -> String {
+    let running = |name: &str| {
+        std::fs::read_dir("/proc").ok().into_iter().flatten().flatten().any(|e| {
+            e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit())
+                && std::fs::read(e.path().join("cmdline")).is_ok_and(|b| String::from_utf8_lossy(&b).contains(name))
+        })
+    };
+    let at = |path: &str| if Path::new(path).is_file() { "有" } else { "无" };
+    format!(
+        "\n[/mnt/system={} 服务目录={} HIDL目录={} keymint={} servicemanager={} hwservicemanager={}]",
+        if mount::is_mount_point(Path::new("/mnt/system")).unwrap_or(false) || Path::new("/mnt/system/bin").is_dir() { "在" } else { "不在" },
+        at("/mnt/system/bin/servicemanager"),
+        at("/mnt/system/bin/hwservicemanager"),
+        if running("keymint") { "运行" } else { "无" },
+        if running("servicemanager") { "运行" } else { "无" },
+        if running("hwservicemanager") { "运行" } else { "无" },
+    )
+}
+
 fn read_slots() -> Result<skyward_vab::BootSlots, String> {
     let read = || -> Result<skyward_vab::BootSlots> {
         let (binder, hardware) = (skyward_binder::driver::Binder::open()?, skyward_binder::driver::Binder::hardware()?);
         let control = skyward_vab::boot::BootControl::open(&binder, &hardware)?;
         control.slots()
     };
-    read().map_err(|e| format!("{e:#}"))
+    read().map_err(|e| format!("{e:#}{}", services_state()))
 }
 
 /// Have the bootloader start `slot` next and give what the boot control
@@ -1117,7 +1165,7 @@ fn installed(cfg: &DeviceConfig, info: &skyward_info::DeviceInfo) -> Result<Inst
         device: prop("ro.product.mod_device")?,
         version: prop(&cfg.device.os_version_prop)?,
         android: prop("ro.build.version.release")?,
-        unlocked: skyward_block::boot_param("androidboot.flash.locked")?.as_deref() == Some("0"),
+        unlocked: bootloader_unlocked(),
     })
 }
 
@@ -1791,7 +1839,7 @@ impl<'a> Pages<'a> {
         let slot = skyward_vab::current_slot().map_err(|e| format!("{e:#}"))?.ok_or("not an A/B phone")?;
         let suffix = if slot == skyward_vab::Slot::A { "_a" } else { "_b" };
         let state = skyward_install::avb::read(Path::new(skyward_block::BY_NAME), suffix).map_err(|e| format!("{e:#}"))?;
-        let unlocked = skyward_block::boot_param("androidboot.flash.locked").ok().flatten().as_deref() == Some("0");
+        let unlocked = bootloader_unlocked();
         let (verity, verification) = (state.verity_enabled(), state.verification_enabled());
         Ok(skyward_ui::app::AvbStatus { partition: state.partition, verity, verification, unlocked })
     }
@@ -2909,6 +2957,16 @@ impl Pages<'_> {
             Effect::Cancel => self.cancel_install(now)?,
             Effect::ReadMounts => self.app.set_mounts(self.mounts()),
             Effect::ReadSlots => self.app.set_boot_slots(read_slots()),
+            Effect::ReadRootModules => {
+                self.app.set_root_modules(read_root_modules(&self.app));
+            }
+            Effect::SetRootModule { id, change } => {
+                let result = root_module_data(&self.app)
+                    .and_then(|adb| root_modules::change(&adb, Path::new("/metadata"), &id, change))
+                    .map_err(|e| format!("{e:#}"));
+                self.app.root_module_changed(result, now);
+                self.app.set_root_modules(read_root_modules(&self.app));
+            }
             Effect::ReadAvb => self.app.set_avb(self.avb_status()),
             Effect::SetAvb { verity, verification } => self.app.avb_changed(self.set_avb(verity, verification), now),
             Effect::SetSlot(slot) => self.app.slot_switched(set_slot(slot), now),

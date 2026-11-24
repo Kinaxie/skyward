@@ -103,49 +103,30 @@ capabilities = ["SYS_NICE"]
 # The phone's vendor rc runs these as root:drmrpc and system:drmrpc.
 # Its vendor ABI is 33; secure::libraries also opens its installed v33
 # VNDK APEX, rather than using the Android 17 port as the vendor ABI.
+# The directories the phone's own services register with, which the
+# recovery starts before them so that they have somewhere to register: the
+# newer kind's from the installed system, which the recovery mounts at
+# /mnt/system, and the older kind's from the same place. Each is passed
+# over where it is not there, and does not hold up the services after it.
 [[service]]
-path = "/vendor/bin/qseecomd"
-libraries = ["/system/lib64", "/vendor/lib64"]
-ready_property = "vendor.sys.listeners.registered"
-user = "root"
-groups = ["root", "drmrpc"]
-
-# Gatekeeper is HIDL 1.0 on this phone. Its service directory comes from
-# the installed system, with that system's loader and libraries.
-[[service]]
-path = "/mnt/system_ext/bin/hwservicemanager"
-libraries = ["/mnt/system/system/lib64/bootstrap", "/mnt/system/system/lib64", "/mnt/system_ext/lib64"]
-ready_property = "hwservicemanager.ready"
+path = "/mnt/system/bin/servicemanager"
+libraries = ["/mnt/system/lib64/bootstrap", "/mnt/system/lib64", "/mnt/system_ext/lib64"]
+ready_property = "servicemanager.ready"
+optional = true
 user = "system"
 groups = ["system", "readproc"]
 
-# The actual vendor manifest declares KeyMint V2, shared secret, secure
-# clock and remote provisioning in this process. Naming the shared-secret
-# interface also has Skyward perform the token-key agreement before PINs
-# are checked; no credential or key blob is changed by that agreement.
 [[service]]
-path = "/vendor/bin/hw/android.hardware.security.keymint-service-qti"
-libraries = ["/system/lib64", "/vendor/lib64"]
-ready_service = "android.hardware.security.sharedsecret.ISharedSecret/default"
-registers = [
-    "android.hardware.security.keymint.IKeyMintDevice/default",
-    "android.hardware.security.secureclock.ISecureClock/default",
-    "android.hardware.security.keymint.IRemotelyProvisionedComponent/default",
-]
+path = "/mnt/system/bin/hwservicemanager"
+libraries = ["/mnt/system/lib64/bootstrap", "/mnt/system/lib64", "/mnt/system_ext/lib64"]
+ready_property = "hwservicemanager.ready"
+optional = true
 user = "system"
-groups = ["system", "drmrpc"]
-
-[[service]]
-path = "/vendor/bin/hw/android.hardware.gatekeeper@1.0-service-qti"
-libraries = ["/system/lib64", "/vendor/lib64"]
-ready_hardware_service = "android.hardware.gatekeeper@1.0::IGatekeeper/default"
-user = "system"
-groups = ["system"]
+groups = ["system", "readproc"]
 
 # The working stock-kernel DSU path needs both the QRTR name service and
-# the CNSS userspace calibration service before fs_ready. Loading only
-# qca_cld3_kiwi_v2 does not supply either. Keep them in the foreground so
-# the recovery supervises the actual processes.
+# the CNSS userspace calibration service before fs_ready. Keep them in the
+# foreground so the recovery supervises the actual processes.
 [[service]]
 path = "/vendor/bin/qrtr-ns"
 args = ["-f"]
@@ -160,16 +141,6 @@ libraries = ["/system/lib64", "/vendor/lib64"]
 user = "system"
 groups = ["system", "inet", "net_admin", "wifi"]
 capabilities = ["NET_ADMIN"]
-# Keep its fixed cache paths in RAM when the recovery opens real userdata.
-
-# The installed vendor exposes boot control through HIDL 1.2. Describing
-# it here also puts the interface in the recovery's hardware manifest.
-[[service]]
-path = "/vendor/bin/hw/android.hardware.boot@1.2-service"
-libraries = ["/system/lib64", "/vendor/lib64"]
-ready_hardware_service = "android.hardware.boot@1.2::IBootControl/default"
-user = "root"
-groups = ["root"]
 
 # WCN7850 uses the stock driver. Its ini is required, while the separate
 # persist MAC file is absent on the tested phone. Let the driver continue

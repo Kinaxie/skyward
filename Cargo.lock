@@ -2811,6 +2811,7 @@ dependencies = [
  "serde_json",
  "skyward-info",
  "skyward-install",
+ "skyward-modules",
  "skyward-net",
  "skyward-systems",
  "skyward-vab",
