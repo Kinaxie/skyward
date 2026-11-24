@@ -1,0 +1,245 @@
+name: Sync upstream
+
+# Keeps this fork level with kirklin/skyward while nobody is watching:
+#
+#   1. merges upstream's main into this fork's main;
+#   2. settles every conflict in this fork's favour — its device
+#      configurations and its UI are the reason the fork exists — and names
+#      in the merge commit the files that had to be settled that way;
+#   3. points the stock-version table in crates/skyward-config at what the
+#      merged devices/*.toml now say, and settles Cargo.lock against the
+#      merged manifests, so the tree passes --locked the way CI runs it;
+#   4. lints and tests the merged tree before anything leaves the runner;
+#   5. pushes main and starts Build for every device. A push made with
+#      GITHUB_TOKEN does not start workflows, so the build is dispatched
+#      here instead of being left to build.yml's own push trigger;
+#   6. when the merged tree does not pass, pushes it to
+#      automation/upstream-sync and opens a pull request instead, so main
+#      stays buildable until a person settles the merge.
+#
+# One merge is in flight at a time: while the pull request is open, runs
+# leave both main and the branch alone.
+
+on:
+  schedule:
+    # 03:43 in Beijing, a quiet hour for whatever this runner shares.
+    - cron: "43 19 * * *"
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: Build every device even when upstream has nothing new
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  UPSTREAM: https://github.com/kirklin/skyward.git
+  SYNC_BRANCH: automation/upstream-sync
+
+jobs:
+  sync:
+    name: Merge upstream and start the build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install the toolchain rust-toolchain.toml names
+        run: rustup toolchain install
+
+      # The merge commit and the lockfile it carries change from run to run;
+      # only the crates that did not move are rebuilt.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Be the bot
+        run: |
+          git config user.name "skyward upstream sync"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge upstream, this fork's side winning every conflict
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # A previous merge that failed its check is still waiting in its
+          # pull request; merging again would write over whatever fix has
+          # been made on that branch.
+          number=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Pull request #$number is waiting for the merge of $SYNC_BRANCH; nothing is merged until it lands." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git remote add upstream "$UPSTREAM" 2>/dev/null || git remote set-url upstream "$UPSTREAM"
+          git fetch --no-tags upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing new upstream: main already holds $(git rev-parse --short=12 upstream/main)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          upstream=$(git rev-parse --short=12 upstream/main)
+          echo "new=true" >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+
+          # Merge once plainly, only to learn which files would stop a plain
+          # merge: the strategy below settles them without saying which they
+          # were, and they belong in the commit message.
+          : > /tmp/conflicts
+          if ! git merge --no-commit --no-ff upstream/main; then
+            git diff --name-only --diff-filter=U | sort -u > /tmp/conflicts
+            git merge --abort
+            git merge --no-commit --no-ff -X ours upstream/main || true
+          fi
+
+          # -X ours settles conflicting hunks in favour of main, but whole
+          # file conflicts (both sides added the file, or one deleted it and
+          # the other edited it) are left alone. Keep this fork's copy where
+          # it has one, upstream's where only upstream has one.
+          while IFS= read -r -d '' file; do
+            if git cat-file -e ":2:$file" 2>/dev/null; then
+              git checkout --ours -- "$file"
+            else
+              git checkout --theirs -- "$file"
+            fi
+            git add -- "$file"
+          done < <(git diff --name-only --diff-filter=U -z)
+
+          # crates/skyward-config pins every phone's stock build a second
+          # time, in a test table. An upstream bump that lands next to a
+          # device this fork pins can leave the two out of step, which the
+          # test step would then fail on for no reason of the merge's.
+          note=$(python3 - <<'PY'
+          import pathlib, re, tomllib
+
+          path = pathlib.Path("crates/skyward-config/src/lib.rs")
+          text = path.read_text()
+
+          def stock_version(codename):
+              try:
+                  config = tomllib.loads(pathlib.Path(f"devices/{codename}.toml").read_text())
+              except (OSError, tomllib.TOMLDecodeError):
+                  return None
+              return config.get("stock", {}).get("version")
+
+          def pin(match):
+              version = stock_version(match.group(1))
+              if version is None or version == match.group(2):
+                  return match.group(0)
+              return match.group(0).replace(f'"{match.group(2)}"', f'"{version}"', 1)
+
+          table = r'\(include_str!\("\.\./\.\./\.\./devices/([a-z0-9_]+)\.toml"\), "([^"]+)"\)'
+          merged = re.sub(table, pin, text)
+          if merged != text:
+              path.write_text(merged)
+              print("pointed the stock version table at the merged device configurations")
+          PY
+          )
+          [ -z "$note" ] || echo "$note"
+
+          # Upstream's manifests may name crates the old lockfile has no
+          # entry for; settle it against the merged tree and keep the result
+          # in the merge commit, since CI builds with --locked.
+          if ! cargo metadata --format-version 1 > /dev/null; then
+            echo "::warning::the merged manifests do not resolve; Cargo.lock is left as it was and the check below decides"
+          fi
+
+          {
+            echo "merge: upstream $upstream"
+            echo
+            echo "Automated by .github/workflows/sync-upstream.yml."
+            if [ -s /tmp/conflicts ]; then
+              echo
+              echo "Upstream changed these files that this fork had changed too; this fork's side was kept:"
+              sed 's/^/  /' /tmp/conflicts
+            fi
+            if [ -n "$note" ]; then
+              echo
+              echo "The stock version table in crates/skyward-config was pointed at the merged devices/*.toml."
+            fi
+          } > /tmp/message
+
+          git add -A
+          git commit -F /tmp/message
+          echo "Merged upstream $upstream into $(git rev-parse --short=12 HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      # The same two checks build.yml's check job runs, on the host, before
+      # the merge is anywhere but this runner.
+      - name: Lint and test the merged tree
+        id: check
+        if: steps.merge.outputs.new == 'true'
+        continue-on-error: true
+        run: |
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace
+
+      - name: Push main and build every device
+        if: steps.merge.outputs.new == 'true' && steps.check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main
+          # The push alone starts nothing, so the build is asked for once the
+          # commit is on main; the workflow file is read from main's tip,
+          # which is the merge just pushed. No device named means every
+          # device devices/ holds a stock package for.
+          started=false
+          for attempt in 1 2 3; do
+            if gh workflow run build.yml --ref main; then started=true; break; fi
+            sleep 10
+          done
+          if [ "$started" != true ]; then
+            echo "::error::main holds upstream ${{ steps.merge.outputs.upstream }} but Build could not be started; run it by hand from the Actions page"
+            exit 1
+          fi
+          echo "main holds upstream ${{ steps.merge.outputs.upstream }}; Build started for every device" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hand the merge over instead
+        if: steps.merge.outputs.new == 'true' && steps.check.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git push --force origin "HEAD:refs/heads/$SYNC_BRANCH"
+          {
+            printf 'The automated merge of upstream `%s` does not lint or test cleanly on this fork, so it was kept off `main`.\n\n' "${{ steps.merge.outputs.upstream }}"
+            printf 'This branch is that merge with every conflict settled in this fork'"'"'s favour. Settle what the check found, push to this branch, and merge it.\n\n'
+            printf 'The commit message names the files this fork kept:\n\n```\n'
+            git log -1 --format=%B
+            printf '```\n\nThe check that failed is in %s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > /tmp/pull-request.md
+          number=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --body-file /tmp/pull-request.md
+          elif ! gh pr create --base main --head "$SYNC_BRANCH" --title "upstream ${{ steps.merge.outputs.upstream }} needs a hand" --body-file /tmp/pull-request.md; then
+            echo "::warning::could not open a pull request; the merge is on $SYNC_BRANCH at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$SYNC_BRANCH"
+          fi
+          echo "::error::the merged tree does not pass; upstream ${{ steps.merge.outputs.upstream }} is on $SYNC_BRANCH rather than main"
+          exit 1
+
+      - name: Build every device anyway
+        if: steps.merge.outputs.new != 'true' && github.event_name == 'workflow_dispatch' && inputs.force_build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run build.yml --ref main
