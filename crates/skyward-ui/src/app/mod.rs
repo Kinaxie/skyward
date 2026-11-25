@@ -42,8 +42,11 @@ mod filesystem;
 mod frame;
 mod input;
 mod install;
+mod kernel_su;
 mod keys;
+mod magisk;
 mod manager;
+mod modules;
 mod mount;
 mod nav;
 mod power;
@@ -67,7 +70,10 @@ pub use entry::*;
 pub use filesystem::*;
 pub use frame::*;
 pub use install::*;
+pub use kernel_su::*;
+pub use magisk::*;
 pub use manager::*;
+pub use modules::*;
 pub use mount::*;
 pub use prefs::*;
 pub use reboot::*;
@@ -98,6 +104,8 @@ pub enum Screen {
     /// A place's folders and the files in them that can be installed, to
     /// choose one.
     Choose(Place),
+    /// A place's files, to choose a `kernelsu.ko` from.
+    ChooseKo(Place),
     /// Installing a package, which the computer sends with `adb sideload`
     /// or which is a file chosen in a place, and how it went.
     Installing,
@@ -156,6 +164,24 @@ pub enum Screen {
     /// The vbmeta flags of the slot: dm-verity and the bootloader's
     /// verification.
     Avb,
+    /// Root's own page: what is installed, the modules, and patching the
+    /// new slot after an install.
+    Root,
+    /// KernelSU's payloads, the KMI to write, and writing it into the
+    /// current slot's boot image.
+    KernelSu,
+    /// The KMI the KernelSU page writes.
+    KernelSuKmi,
+    /// The kernel module KernelSU writes: the one its KMI names, or a
+    /// `kernelsu.ko` chosen here.
+    KernelSuModule,
+    /// Magisk's boot patcher, and writing it into the current slot's boot
+    /// image.
+    Magisk,
+    /// The modules the phone's own system loads.
+    Modules,
+    /// One module, with the switch and the uninstall mark.
+    ModuleInfo,
     /// What flashing and decrypting have said, and what this phone is.
     Output,
     /// Saving the logs, as a bug report asks for them.
@@ -236,6 +262,10 @@ pub enum Confirm {
     Merge,
     /// Write the vbmeta flags the AVB page shows.
     Avb,
+    /// Write the KMI the KernelSU page chose into the current slot.
+    KernelSu,
+    /// Write Magisk into the current slot.
+    Magisk,
     /// Give the data partition's files the SELinux labels the installed
     /// system's rules give them.
     Relabel,
@@ -362,6 +392,9 @@ pub enum Action {
     /// Open the entry at this place in a place's folder: a folder to look
     /// in, or the file to install.
     ChooseEntry(usize),
+    /// Choose the entry at this place in a place's folder as the
+    /// `kernelsu.ko` to write: a folder to look in, or the file itself.
+    ChooseKoEntry(usize),
     /// Go up to the folder this many levels below the top of the list
     /// shown, by its place in the path shown over the list.
     OpenAncestor(usize),
@@ -378,6 +411,8 @@ pub enum Action {
     EditEntry,
     /// Install the file the file page shows.
     InstallEntry,
+    /// Install the zip the file page shows as a root module.
+    InstallAsModule,
     /// Write the file the editor page shows as it now stands.
     SaveText,
     /// Open the page of the permissions of the entry the file page shows.
@@ -428,6 +463,23 @@ pub enum Action {
     StopDownload,
     /// Install the full package downloaded.
     InstallDownloaded,
+    /// Choose the KMI at this place in KernelSU's list.
+    KernelSuKmi(usize),
+    /// Write the module the KMI names rather than the chosen `kernelsu.ko`.
+    KernelSuModuleBuiltIn,
+    /// Write the backup KernelSU's page found back into its boot image.
+    RestoreKernelSu,
+    /// Write the backup Magisk's page found back into its boot image.
+    RestoreMagisk,
+    /// Open the module at this place in the list.
+    ModuleOpen(usize),
+    /// Switch the module at this place on or off.
+    ModuleToggle(usize),
+    /// Mark the module at this place to go at the next start, or keep it.
+    ModuleRemove(usize),
+    /// Choose which root manager patches the new slot after an install,
+    /// or none; both cannot be installed together.
+    SetAutoRoot(AutoRoot),
     /// Ask GitHub for Skyward's newest release.
     CheckSkyward,
     /// Download the newest release's build for the phone and write it into
@@ -537,6 +589,39 @@ pub enum Effect {
     ReadSlots,
     /// Read the vbmeta flags of the slot, telling them with [`App::set_avb`].
     ReadAvb,
+    /// Read what KernelSU and the phone say, telling it with
+    /// [`App::set_kernel_su`].
+    ReadKernelSu,
+    /// Write the KMI named into the current slot's boot image, telling how
+    /// it goes with [`App::kernel_su_started`], [`App::kernel_su_progress`]
+    /// and [`App::kernel_su_ended`].
+    InstallKernelSu { kmi: String, module: Option<String> },
+    /// Download the latest KernelSU release and write its KMI into the
+    /// current slot.
+    InstallKernelSuLatest { kmi: String, module: Option<String> },
+    /// Write back the boot image KernelSU replaced, telling how it goes as
+    /// an install does.
+    RestoreKernelSu,
+    /// Read what Magisk and the phone say, telling it with
+    /// [`App::set_magisk`].
+    ReadMagisk,
+    /// Write Magisk into the current slot's boot image, telling how it goes
+    /// with [`App::magisk_started`], [`App::magisk_progress`] and
+    /// [`App::magisk_ended`].
+    InstallMagisk,
+    /// Write back the boot image Magisk replaced, telling how it goes as an
+    /// install does.
+    RestoreMagisk,
+    /// Read the modules the phone's own system loads, telling them with
+    /// [`App::set_modules`].
+    ReadModules,
+    /// Switch the module in this folder on or off.
+    ModuleSwitch { id: String, on: bool },
+    /// Mark the module in this folder to go at the next start, or keep it.
+    ModuleRemove { id: String, on: bool },
+    /// Install the zip at this path through the phone's root manager,
+    /// telling how it went with [`App::report`].
+    ModuleInstall { path: String },
     /// Write the vbmeta flags of both slots, telling how it went with
     /// [`App::avb_changed`].
     SetAvb { verity: bool, verification: bool },
@@ -564,6 +649,9 @@ pub enum Effect {
     /// List the folder at this path from the top of a place, to choose a
     /// file to install in, telling what it holds with [`App::set_place`].
     ReadPlace(Place, String),
+    /// List the folder at this path from the top of a place, to choose a
+    /// `kernelsu.ko` in, telling what it holds with [`App::set_ko_place`].
+    ReadKoPlace(Place, String),
     /// Open the data partition as far as it opens with nothing a user
     /// knows, telling what waits with [`App::data_waiting`] or why it did
     /// not open with [`App::data_failed`].

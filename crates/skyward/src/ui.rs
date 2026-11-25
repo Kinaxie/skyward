@@ -4,10 +4,12 @@ use crate::filework;
 use crate::haptics::Haptics;
 use crate::input::{ Event, Inputs, monotonic_ms};
 use crate::merge;
+use crate::modules;
 use crate::partwork;
 use crate::pty;
 use crate::readings::{Reading, Readings};
 use crate::relabel;
+use crate::root;
 use crate::secure;
 use crate::services;
 use crate::settings;
@@ -37,7 +39,7 @@ use skyward_systems::Who;
 use skyward_ui::app::{
     App, Asked, BackupAt, BackupEnd, BackupEntry, BackupRefusal, ClashChoice, DATA_OPENING,
     DATA_PARTITION, DOWNLOADS, Data, DownloadEnd, Effect, EraseStop, FileKind, FileOp,
-    FileRow, FileTask, FsAction, FsRow, Have, Held, INSTALL_UNFINISHED, ItemEnd, ItemState, JobEnd, Keys, MountFailure, Part, PartKind, PartStop, Place,
+    FileRow, FileTask, FsAction, FsRow, Have, Held, INSTALL_UNFINISHED, ItemEnd, ItemState, JobEnd, KernelSuEnd, Keys, MountFailure, Part, PartKind, PartStop, Place,
     RenameRefused, Screen, Shot, SkywardEnd, SkywardStage, Target, USB_DRIVE, UsbDrive, UsbLink, Wipe,
 };
 use skyward_ui::fmt::TimeZone;
@@ -357,6 +359,13 @@ fn list(app: &mut App, folder: String) -> Result<()> {
 fn list_place(app: &mut App, place: Place, folder: String) -> Result<()> {
     let files = read_folder(&in_place(place, &folder)).map_err(|e| format!("{e:#}"));
     app.set_place(place, folder, files, unix_now()?);
+    Ok(())
+}
+
+/// The folder a `kernelsu.ko` is chosen in, with the modules it holds.
+fn list_ko_place(app: &mut App, place: Place, folder: String) -> Result<()> {
+    let files = read_folder(&in_place(place, &folder)).map_err(|e| format!("{e:#}"));
+    app.set_ko_place(place, folder, files, unix_now()?);
     Ok(())
 }
 
@@ -1354,6 +1363,21 @@ struct Pages<'a> {
     /// Asking GitHub for Skyward's newest release, and updating to it.
     skyward_checker: Option<updates::Worker>,
     skyward_updater: Option<updates::Worker>,
+    /// Writing KernelSU into the current slot.
+    root_worker: Option<root::Worker>,
+    /// Writing Magisk into the current slot.
+    magisk_worker: Option<root::Worker>,
+    /// Installing a module's zip through the phone's root manager.
+    modules_worker: Option<modules::Worker>,
+    /// The install that asked for the new slot to be patched would have
+    /// left once it finished; it waits for the patch.
+    auto_root_leaves: bool,
+    /// Slots after the first that the same install wrote and the patch is
+    /// still to write root into.
+    auto_root_slots: Vec<skyward_vab::Slot>,
+    /// The root patches left the phone ready to go, but a merge it asked
+    /// for is still writing: the phone leaves once that is done.
+    merge_leaves: bool,
     /// The terminal page's shell, from when the page first asks for one.
     shell: Option<pty::Shell>,
     /// The USB drive plugged in, looked for each second.
@@ -1589,6 +1613,12 @@ impl<'a> Pages<'a> {
             downloader: None,
             skyward_checker: None,
             skyward_updater: None,
+            root_worker: None,
+            magisk_worker: None,
+            modules_worker: None,
+            auto_root_leaves: false,
+            auto_root_slots: Vec::new(),
+            merge_leaves: false,
             shell: None,
             plugged: None,
             seen: None,
@@ -1779,6 +1809,9 @@ impl<'a> Pages<'a> {
         self.keep_settings(now)?;
         self.updates_told(now)?;
         self.skyward_told(now)?;
+        self.root_told(now)?;
+        self.magisk_told(now)?;
+        self.modules_told(now);
         self.decrypt_told(now)?;
         self.shell_told()?;
         self.take_in(drive_told, now)?;
@@ -2145,6 +2178,15 @@ impl<'a> Pages<'a> {
         if let Some(u) = &self.skyward_updater {
             fds.push(u.fd());
         }
+        if let Some(r) = &self.root_worker {
+            fds.push(r.fd());
+        }
+        if let Some(r) = &self.magisk_worker {
+            fds.push(r.fd());
+        }
+        if let Some(m) = &self.modules_worker {
+            fds.push(m.fd());
+        }
         if let Some(s) = &self.systems_worker {
             fds.push(s.fd());
         }
@@ -2174,6 +2216,9 @@ impl<'a> Pages<'a> {
             || self.downloader.is_some()
             || self.skyward_checker.is_some()
             || self.skyward_updater.is_some()
+            || self.root_worker.is_some()
+            || self.magisk_worker.is_some()
+            || self.modules_worker.is_some()
             || systems_busy;
         let joining = self.app.state.wlan.as_ref().and_then(|w| w.joined.as_ref()).is_some_and(|j| matches!(j.stage, Joining::Joining | Joining::Addressing));
         let running = match &self.shell {
@@ -2212,6 +2257,95 @@ impl<'a> Pages<'a> {
 /// What the work under way told since the last turn, each kind of work
 /// taken in by a method of its own.
 impl Pages<'_> {
+    /// An install finished and the Root setting asks for the new slot to
+    /// be patched: write the root already on the phone into that slot.
+    fn start_auto_root(&mut self, slot: skyward_vab::Slot, now: u64) -> Result<bool> {
+        if self.app.state.data != Data::Open {
+            return self.auto_root_skipped("the data partition is not open", now);
+        }
+        if self.installer.is_some() {
+            return self.auto_root_skipped("an installer is still running", now);
+        }
+        if self.root_worker.is_some() || self.magisk_worker.is_some() {
+            return self.auto_root_skipped("a root image is being written already", now);
+        }
+        match self.app.state.auto_root {
+            skyward_ui::app::AutoRoot::None => Ok(false),
+            skyward_ui::app::AutoRoot::KernelSu => {
+                if root::installed_root() != Some(root::InstalledRoot::KernelSu) {
+                    return self.auto_root_skipped("KernelSU is not the installed root", now);
+                }
+                let Some(kmi) = root::auto_kmi(&self.info) else {
+                    return self.auto_root_skipped("no KernelSU KMI is known", now);
+                };
+                let module = match root::auto_module() {
+                    Ok(module) => module,
+                    Err(why) => return self.auto_root_skipped(&why, now),
+                };
+                skyward_sys::kmsg(&format!("patching KernelSU {kmi} into slot {} after the install", slot.letter()))?;
+                self.app.kernel_su_started();
+                self.root_worker = Some(root::Worker::start(root::Task::InstallKernelSu { kmi, slot: Some(slot), module })?);
+                Ok(true)
+            }
+            skyward_ui::app::AutoRoot::Magisk => {
+                if root::installed_root() != Some(root::InstalledRoot::Magisk) {
+                    return self.auto_root_skipped("Magisk is not the installed root", now);
+                }
+                skyward_sys::kmsg(&format!("patching Magisk into slot {} after the install", slot.letter()))?;
+                self.app.magisk_started();
+                self.magisk_worker = Some(root::Worker::start(root::Task::InstallMagisk { slot: Some(slot) })?);
+                Ok(true)
+            }
+        }
+    }
+
+    /// The install asked for the new slot to be patched, but this phone
+    /// cannot: say why, where the user is looking.
+    fn auto_root_skipped(&mut self, why: &str, now: u64) -> Result<bool> {
+        skyward_sys::kmsg(&format!("the new slot was not patched: {why}"))?;
+        self.app.root_failed(why, now);
+        Ok(false)
+    }
+
+    /// A slot's root image was written; patch the next slot the same
+    /// install wrote, or let the phone leave once neither is left.
+    fn auto_root_ended(&mut self, succeeded: bool, failure: Option<String>, now: u64) -> Result<()> {
+        if !std::mem::take(&mut self.auto_root_leaves) {
+            return Ok(());
+        }
+        if !succeeded {
+            self.auto_root_slots.clear();
+            if let Some(why) = failure {
+                self.app.root_failed(&why, now);
+            }
+            return Ok(());
+        }
+        if let Some(next) = self.auto_root_slots.first().copied() {
+            self.auto_root_slots.remove(0);
+            if self.start_auto_root(next, now)? {
+                self.auto_root_leaves = true;
+            } else {
+                self.auto_root_slots.clear();
+                self.leave_when_ready(now);
+            }
+        } else {
+            self.leave_when_ready(now);
+        }
+        Ok(())
+    }
+
+    /// The phone may leave once nothing else is writing: a merge the same
+    /// install asked for keeps it here until it ends.
+    fn leave_when_ready(&mut self, now: u64) {
+        if self.merger.is_some() {
+            self.merge_leaves = true;
+        } else if self.eraser.is_some() {
+            self.erase_leaves = true;
+        } else {
+            self.leave_at = Some(now + LEAVE_AFTER_MS);
+        }
+    }
+
     /// What the installer told: its page follows it, and its end starts
     /// what the package, the request or rescue asked for after it.
     fn installer_told(&mut self, now: u64) -> Result<()> {
@@ -2225,6 +2359,13 @@ impl Pages<'_> {
             let merge_slot = match &ev {
                 Told::Finished(Outcome::Installed { slot, .. }) => Some(*slot),
                 _ => None,
+            };
+            let auto_slots = match &ev {
+                Told::Finished(Outcome::Installed { slot, wipe: false, .. }) => vec![*slot],
+                Told::Finished(Outcome::Flashed { partition, slots }) if matches!(partition.as_str(), "boot" | "init_boot") => {
+                    if slots.is_empty() { skyward_vab::current_slot()?.into_iter().collect() } else { slots.clone() }
+                }
+                _ => Vec::new(),
             };
             // A second system installed is read for the pages to show.
             if matches!(ev, Told::Done(Outcome::SystemInstalled { .. }) | Told::Finished(Outcome::SystemInstalled { .. })) {
@@ -2260,11 +2401,32 @@ impl Pages<'_> {
                 if matches!(self.request.work, Work::Sideload { .. } | Work::Update(_) | Work::Rescue) {
                     self.done_with_request()?;
                 }
-                let (leaves, cache_after) = match &self.request.work {
+                let (mut leaves, cache_after) = match &self.request.work {
                     Work::Sideload { auto_reboot } => (*auto_reboot, script_cache),
                     Work::Update(update) => (installed, script_cache || (installed && update.wipe_cache)),
                     _ => (false, script_cache),
                 };
+                let auto_root = match auto_slots.split_first() {
+                    Some((first, rest)) => {
+                        let started = self.start_auto_root(*first, now)?;
+                        if started {
+                            self.auto_root_slots = rest.to_vec();
+                        }
+                        started
+                    }
+                    None => false,
+                };
+                if auto_root {
+                    // The root write goes on before the phone leaves; the
+                    // patch's end asks to leave again.
+                    self.auto_root_leaves = leaves;
+                    leaves = false;
+                } else if self.root_worker.is_some() || self.magisk_worker.is_some() {
+                    // A boot image is being written: nothing may leave until
+                    // it is whole, whatever this install in the same breath
+                    // says.
+                    leaves = false;
+                }
                 if cache_after && !self.app.state.cache_partition {
                     skyward_sys::kmsg("the install asked for the cache partition to be erased, and the phone has none")?;
                 }
@@ -2507,6 +2669,9 @@ impl Pages<'_> {
             self.read_at = Instant::now();
             read_details(self.cfg, &mut self.info, &mut self.unread.details)?;
             self.app.refresh();
+            if std::mem::take(&mut self.merge_leaves) {
+                self.leave_when_ready(now);
+            }
         }
         Ok(())
     }
@@ -2691,6 +2856,90 @@ impl Pages<'_> {
             self.skyward_updater = None;
         }
         Ok(())
+    }
+
+    /// What writing KernelSU told: its page follows the stages, and its end
+    /// is read again so the page shows what is now on the phone.
+    fn root_told(&mut self, now: u64) -> Result<()> {
+        let told = self.root_worker.as_ref().map(root::Worker::events).unwrap_or_default();
+        let mut ended = false;
+        let mut succeeded = false;
+        let mut failure = None;
+        for ev in told {
+            match ev {
+                root::Event::Stage(stage) => self.app.kernel_su_progress(stage),
+                root::Event::Fetched(version) => self.app.kernel_su_fetched(version, now),
+                root::Event::Fallback(why) => self.app.kernel_su_fallback(why, now),
+                root::Event::Ended(end) => {
+                    succeeded = !matches!(end, KernelSuEnd::Failed(_));
+                    if let KernelSuEnd::Failed(why) = &end {
+                        failure = Some(why.clone());
+                    }
+                    skyward_sys::kmsg(&format!("writing KernelSU ended: {end:?}"))?;
+                    self.app.kernel_su_ended(end, now);
+                    ended = true;
+                }
+            }
+        }
+        if ended {
+            self.root_worker = None;
+            self.app.set_kernel_su(root::status(&self.info));
+            self.auto_root_ended(succeeded, failure, now)?;
+        }
+        Ok(())
+    }
+
+    /// What writing Magisk told: its page follows the stages, and its end is
+    /// read again so the page shows what is now on the phone.
+    fn magisk_told(&mut self, now: u64) -> Result<()> {
+        let told = self.magisk_worker.as_ref().map(root::Worker::events).unwrap_or_default();
+        let mut ended = false;
+        let mut succeeded = false;
+        let mut failure = None;
+        for ev in told {
+            match ev {
+                root::Event::Stage(stage) => self.app.magisk_progress(stage),
+                root::Event::Fetched(_) | root::Event::Fallback(_) => {}
+                root::Event::Ended(end) => {
+                    succeeded = !matches!(end, KernelSuEnd::Failed(_));
+                    if let KernelSuEnd::Failed(why) = &end {
+                        failure = Some(why.clone());
+                    }
+                    skyward_sys::kmsg(&format!("writing Magisk ended: {end:?}"))?;
+                    self.app.magisk_ended(end, now);
+                    ended = true;
+                }
+            }
+        }
+        if ended {
+            self.magisk_worker = None;
+            self.app.set_magisk(root::magisk_status(&self.info));
+            self.auto_root_ended(succeeded, failure, now)?;
+        }
+        Ok(())
+    }
+
+    /// A module zip installed through the phone's root manager; the page
+    /// is read again so it shows where the module waits.
+    fn modules_told(&mut self, now: u64) {
+        let told = self.modules_worker.as_ref().map(modules::Worker::events).unwrap_or_default();
+        let mut ended = false;
+        for ev in told {
+            match ev {
+                modules::Event::Ended(Ok(manager)) => {
+                    self.app.module_installed(&manager, now);
+                    ended = true;
+                }
+                modules::Event::Ended(Err(why)) => {
+                    self.app.report(&why, now);
+                    ended = true;
+                }
+            }
+        }
+        if ended {
+            self.modules_worker = None;
+            self.app.set_modules(modules::read());
+        }
     }
 
     /// How opening the data partition, or a user's own files in it, ended.
@@ -2910,6 +3159,72 @@ impl Pages<'_> {
             Effect::ReadMounts => self.app.set_mounts(self.mounts()),
             Effect::ReadSlots => self.app.set_boot_slots(read_slots()),
             Effect::ReadAvb => self.app.set_avb(self.avb_status()),
+            Effect::ReadKernelSu => self.app.set_kernel_su(root::status(&self.info)),
+            Effect::InstallKernelSu { kmi, module } => {
+                ensure!(self.root_worker.is_none(), "KernelSU is being written already");
+                ensure!(self.magisk_worker.is_none(), "Magisk is being written already");
+                ensure!(self.installer.is_none(), "an installer is running already");
+                ensure!(self.systems_worker.as_ref().is_none_or(|w| !systems::Worker::busy(w)), "the second system is being written");
+                skyward_sys::kmsg(&format!("writing KernelSU {kmi} into the current slot"))?;
+                self.root_worker = Some(root::Worker::start(root::Task::InstallKernelSu { kmi, slot: None, module })?);
+            }
+            Effect::InstallKernelSuLatest { kmi, module } => {
+                ensure!(self.root_worker.is_none(), "KernelSU is being written already");
+                ensure!(self.magisk_worker.is_none(), "Magisk is being written already");
+                ensure!(self.installer.is_none(), "an installer is running already");
+                ensure!(self.systems_worker.as_ref().is_none_or(|w| !systems::Worker::busy(w)), "the second system is being written");
+                skyward_sys::kmsg(&format!("fetching and writing the latest KernelSU {kmi} into the current slot"))?;
+                let servers = self.servers.clone();
+                self.root_worker = Some(root::Worker::start(root::Task::InstallKernelSuLatest { kmi, slot: None, servers, module })?);
+            }
+            Effect::RestoreKernelSu => {
+                ensure!(self.root_worker.is_none(), "KernelSU is being written already");
+                ensure!(self.magisk_worker.is_none(), "Magisk is being written already");
+                ensure!(self.installer.is_none(), "an installer is running already");
+                ensure!(self.systems_worker.as_ref().is_none_or(|w| !systems::Worker::busy(w)), "the second system is being written");
+                skyward_sys::kmsg("restoring the stock boot image KernelSU replaced")?;
+                self.root_worker = Some(root::Worker::start(root::Task::RestoreKernelSu)?);
+            }
+            Effect::ReadMagisk => self.app.set_magisk(root::magisk_status(&self.info)),
+            Effect::InstallMagisk => {
+                ensure!(self.magisk_worker.is_none(), "Magisk is being written already");
+                ensure!(self.root_worker.is_none(), "KernelSU is being written already");
+                ensure!(self.installer.is_none(), "an installer is running already");
+                ensure!(self.systems_worker.as_ref().is_none_or(|w| !systems::Worker::busy(w)), "the second system is being written");
+                skyward_sys::kmsg("writing Magisk into the current slot")?;
+                self.magisk_worker = Some(root::Worker::start(root::Task::InstallMagisk { slot: None })?);
+            }
+            Effect::RestoreMagisk => {
+                ensure!(self.magisk_worker.is_none(), "Magisk is being written already");
+                ensure!(self.root_worker.is_none(), "KernelSU is being written already");
+                ensure!(self.installer.is_none(), "an installer is running already");
+                ensure!(self.systems_worker.as_ref().is_none_or(|w| !systems::Worker::busy(w)), "the second system is being written");
+                skyward_sys::kmsg("restoring the stock boot image Magisk replaced")?;
+                self.magisk_worker = Some(root::Worker::start(root::Task::RestoreMagisk)?);
+            }
+            Effect::ReadModules => self.app.set_modules(modules::read()),
+            Effect::ModuleSwitch { id, on } => {
+                ensure!(self.modules_worker.is_none(), "a module is being installed already");
+                if let Err(e) = modules::switch(&id, on) {
+                    skyward_sys::kmsg(&format!("module {id} is not switched: {e:#}"))?;
+                    self.app.report(&format!("{e:#}"), now);
+                }
+                self.app.set_modules(modules::read());
+            }
+            Effect::ModuleRemove { id, on } => {
+                ensure!(self.modules_worker.is_none(), "a module is being installed already");
+                if let Err(e) = modules::remove(&id, on) {
+                    skyward_sys::kmsg(&format!("module {id} is not marked: {e:#}"))?;
+                    self.app.report(&format!("{e:#}"), now);
+                }
+                self.app.set_modules(modules::read());
+            }
+            Effect::ModuleInstall { path } => {
+                ensure!(self.modules_worker.is_none(), "a module is being installed already");
+                ensure!(self.app.state.data != Data::Closed, "the data partition is not open");
+                skyward_sys::kmsg(&format!("installing {path} as a module"))?;
+                self.modules_worker = Some(modules::Worker::start(path)?);
+            }
             Effect::SetAvb { verity, verification } => self.app.avb_changed(self.set_avb(verity, verification), now),
             Effect::SetSlot(slot) => self.app.slot_switched(set_slot(slot), now),
             Effect::ReadSystems => self.systems()?.send(systems::Task::Read),
@@ -2945,6 +3260,7 @@ impl Pages<'_> {
             }
             Effect::ReadDir(folder) => list(&mut self.app, folder)?,
             Effect::ReadPlace(place, folder) => list_place(&mut self.app, place, folder)?,
+            Effect::ReadKoPlace(place, folder) => list_ko_place(&mut self.app, place, folder)?,
             Effect::Paste { op, path, into, clash } => self.paste(op, path, into, clash, now)?,
             Effect::Delete(path) => {
                 ensure!(self.worker.is_none(), "work on files is under way already");

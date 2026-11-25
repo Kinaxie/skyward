@@ -19,6 +19,7 @@ members = [
     "crates/skyward-net",
     "crates/skyward-preview",
     "crates/skyward-pack",
+    "crates/skyward-root",
     "crates/skyward-sys",
     "crates/skyward-lp",
     "crates/skyward-bootimg",

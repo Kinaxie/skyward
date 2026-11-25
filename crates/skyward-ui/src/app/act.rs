@@ -38,6 +38,18 @@ impl App {
                     self.state.avb = None;
                     self.state.avb_notice = None;
                 }
+                if s == Screen::KernelSu {
+                    self.state.kernel_su = None;
+                    self.state.kernel_su_job = None;
+                }
+                if s == Screen::Magisk {
+                    self.state.magisk = None;
+                    self.state.magisk_job = None;
+                }
+                if s == Screen::Modules {
+                    self.state.modules = None;
+                    self.state.module_at = None;
+                }
                 if s == Screen::Search && self.screen() == Screen::Home {
                     // The bar moves up from where it stands unfolded: a
                     // page easing there for the keys gets there at once.
@@ -109,6 +121,7 @@ impl App {
                     Switch::WakeTap => &mut self.state.wake_tap,
                     Switch::AvbVerity => &mut self.state.avb_verity,
                     Switch::AvbVerification => &mut self.state.avb_verification,
+                    Switch::KernelSuOnline => &mut self.state.kernel_su_online,
                     Switch::Wlan | Switch::SystemTimeZone => unreachable!("the switch is turned above"),
                 };
                 *on = !*on;
@@ -234,6 +247,7 @@ impl App {
                 let size = self.state.file.as_ref().expect("the file page shows an entry").size;
                 return self.install_opened(self.entry_path(), size, now);
             }
+            Action::InstallAsModule => return vec![Effect::ModuleInstall { path: self.entry_path() }],
             Action::SaveText => {
                 let ed = self.state.editor.as_ref().expect("the editor page shows a file");
                 return vec![Effect::SaveText { path: ed.path.clone(), text: ed.text() }];
@@ -539,11 +553,34 @@ impl App {
                     FileKind::Special => unreachable!("a place lists no special files"),
                 }
             }
+            Action::ChooseKoEntry(i) => {
+                let screen = self.screen();
+                let Screen::ChooseKo(place) = screen else { unreachable!("only a place's folder is chosen into a module") };
+                let folder = self.state.folder(screen);
+                let entry = folder.entry(i).clone();
+                let path = folder.inside(&entry.name);
+                match entry.kind {
+                    FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => {
+                        let scroll = self.top().1;
+                        self.state.folder_mut(screen).leave(scroll);
+                        return vec![Effect::ReadKoPlace(place, path)];
+                    }
+                    FileKind::File | FileKind::Link { folder: false, .. } => {
+                        if std::path::Path::new(&entry.name).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ko")) {
+                            self.state.kernel_su_ko = Some(path);
+                            return self.back(now);
+                        }
+                        self.say(l.pick(texts::kernel_su::NOT_KO), now);
+                    }
+                    FileKind::Special => unreachable!("a place lists no special files"),
+                }
+            }
             Action::OpenAncestor(depth) => {
                 let screen = self.screen();
                 if let Some(path) = self.state.folder(screen).ancestor(depth) {
                     return vec![match screen {
                         Screen::Choose(place) => Effect::ReadPlace(place, path),
+                        Screen::ChooseKo(place) => Effect::ReadKoPlace(place, path),
                         _ => Effect::ReadDir(path),
                     }];
                 }
@@ -719,6 +756,59 @@ impl App {
                     return vec![Effect::StopSkywardUpdate];
                 }
             }
+            Action::KernelSuKmi(at) => {
+                self.set_kernel_su_kmi(at);
+                return self.back(now);
+            }
+            Action::KernelSuModuleBuiltIn => {
+                self.state.kernel_su_ko = None;
+                self.refresh();
+            }
+            Action::RestoreKernelSu => {
+                if self.state.data != Data::Open {
+                    self.say(l.pick(texts::kernel_su::NO_DATA), now);
+                } else if self.state.kernel_su_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::kernel_su::BUSY), now);
+                } else {
+                    self.kernel_su_started();
+                    return vec![Effect::RestoreKernelSu];
+                }
+            }
+            Action::RestoreMagisk => {
+                if self.state.data != Data::Open {
+                    self.say(l.pick(texts::kernel_su::NO_DATA), now);
+                } else if self.state.magisk_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::kernel_su::BUSY), now);
+                } else {
+                    self.magisk_started();
+                    return vec![Effect::RestoreMagisk];
+                }
+            }
+            Action::ModuleOpen(at) => {
+                if self.state.modules.as_ref().is_some_and(|r| r.as_ref().is_ok_and(|list| at < list.len())) {
+                    self.open_module(at);
+                    self.open(Screen::ModuleInfo);
+                    return self.arrive_at(Screen::ModuleInfo);
+                }
+            }
+            Action::ModuleToggle(at) => {
+                if let Some(Ok(list)) = &self.state.modules
+                    && let Some(module) = list.get(at)
+                {
+                    return vec![Effect::ModuleSwitch { id: module.id.clone(), on: !module.enabled }];
+                }
+            }
+            Action::ModuleRemove(at) => {
+                if let Some(Ok(list)) = &self.state.modules
+                    && let Some(module) = list.get(at)
+                {
+                    return vec![Effect::ModuleRemove { id: module.id.clone(), on: !module.removing }];
+                }
+            }
+            Action::SetAutoRoot(root) => {
+                self.state.auto_root = if self.state.auto_root == root { AutoRoot::None } else { root };
+                self.refresh();
+            }
             Action::Unavailable(text) => self.say(text, now),
         }
         Vec::new()
@@ -732,6 +822,8 @@ impl App {
             Screen::Files,
             Screen::Choose(Place::Storage),
             Screen::Choose(Place::UsbDrive),
+            Screen::ChooseKo(Place::Storage),
+            Screen::ChooseKo(Place::UsbDrive),
         ] {
             self.state.folder_mut(screen).sort(key, desc);
         }
@@ -1026,6 +1118,54 @@ impl App {
                     let why = l.pick(texts::local::AVB_LOCKED_REFUSAL);
                     self.state.avb_notice = Some(why.to_string());
                     self.refresh();
+                }
+            }
+            Confirm::KernelSu => {
+                let unlocked = self
+                    .state
+                    .kernel_su
+                    .as_ref()
+                    .is_some_and(|s| s.as_ref().is_ok_and(|s| s.unlocked));
+                let other = self.state.magisk.as_ref().is_some_and(|s| s.as_ref().is_ok_and(|s| s.installed));
+                let other_busy = self.state.magisk_job.as_ref().is_some_and(|j| j.outcome.is_none());
+                if other {
+                    self.say(l.pick(texts::root::OTHER_ROOT), now);
+                } else if other_busy {
+                    self.say(l.pick(texts::magisk::BUSY), now);
+                } else if !unlocked {
+                    self.say(l.pick(texts::kernel_su::LOCKED), now);
+                } else if self.state.data != Data::Open {
+                    self.say(l.pick(texts::kernel_su::NO_DATA), now);
+                } else if self.state.kernel_su_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::kernel_su::BUSY), now);
+                } else if let Some(kmi) = self.kernel_su_kmi().map(|k| k.id.clone()) {
+                    self.kernel_su_started();
+                    let module = self.state.kernel_su_ko.clone();
+                    let effect = if self.state.kernel_su_online {
+                        Effect::InstallKernelSuLatest { kmi, module }
+                    } else {
+                        Effect::InstallKernelSu { kmi, module }
+                    };
+                    fx.push(effect);
+                }
+            }
+            Confirm::Magisk => {
+                let unlocked = self.state.magisk.as_ref().is_some_and(|s| s.as_ref().is_ok_and(|s| s.unlocked));
+                let other = self.state.kernel_su.as_ref().is_some_and(|s| s.as_ref().is_ok_and(|s| s.installed));
+                let other_busy = self.state.kernel_su_job.as_ref().is_some_and(|j| j.outcome.is_none());
+                if other {
+                    self.say(l.pick(texts::root::OTHER_ROOT), now);
+                } else if other_busy {
+                    self.say(l.pick(texts::kernel_su::BUSY), now);
+                } else if !unlocked {
+                    self.say(l.pick(texts::kernel_su::LOCKED), now);
+                } else if self.state.data != Data::Open {
+                    self.say(l.pick(texts::kernel_su::NO_DATA), now);
+                } else if self.state.magisk_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::magisk::BUSY), now);
+                } else {
+                    self.magisk_started();
+                    fx.push(Effect::InstallMagisk);
                 }
             }
             Confirm::Merge => {

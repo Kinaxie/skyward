@@ -46,6 +46,37 @@ pub enum Switch {
     AvbVerification,
     /// Keep the time zone the installed system is set to.
     SystemTimeZone,
+    /// Fetch the latest KernelSU release for the next install.
+    KernelSuOnline,
+}
+
+/// Which root manager patches the new slot after an install. Only one may
+/// be installed, so only one may be chosen.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AutoRoot {
+    #[default]
+    None,
+    KernelSu,
+    Magisk,
+}
+
+impl AutoRoot {
+    pub fn name(self) -> &'static str {
+        match self {
+            AutoRoot::None => "none",
+            AutoRoot::KernelSu => "kernelsu",
+            AutoRoot::Magisk => "magisk",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<AutoRoot> {
+        match name {
+            "none" => Some(AutoRoot::None),
+            "kernelsu" => Some(AutoRoot::KernelSu),
+            "magisk" => Some(AutoRoot::Magisk),
+            _ => None,
+        }
+    }
 }
 
 /// How long the screen stays on with nothing touched, in milliseconds, in

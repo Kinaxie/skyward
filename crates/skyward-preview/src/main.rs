@@ -10,9 +10,9 @@ use skyward_net::supplicant::Security;
 use skyward_net::wlan::{Bands, Joined, Link, Network, Power, Stage as Joining, Traffic, Wlan};
 use skyward_systems::{Named, Other, Overview, Who};
 use skyward_ui::app::{
-    Action, Adding, App, Asked, BackupAt, BackupEnd, BackupEntry, BackupJob, BackupRefusal, Choice, Clip, Damage, Data, DownloadEnd,
+    Action, Adding, App, Asked, AutoRoot, BackupAt, BackupEnd, BackupEntry, BackupJob, BackupRefusal, Choice, Clip, Damage, Data, DownloadEnd,
     DownloadJob, EraseStop, Field, FileKind, FileOp, FileRow, FileTask, FsAction, FsRow, Have, Held, Install, ItemEnd, JobEnd, Key, Keys,
-    MountFailure, MountRow, Part, PartKind, PartStop, Pick, Place, Region, Screen, SkywardEnd, SkywardJob, SkywardStage, Source, State,
+    KernelSuStatus, KmiRow, MagiskStatus, ModuleRow, MountFailure, MountRow, Part, PartKind, PartStop, Pick, Place, Region, Screen, SkywardEnd, SkywardJob, SkywardStage, Source, State,
     SystemChoice, SystemsWork, TermEnd, Touch, UsbDrive, UsbLink, SCREEN_OFF, listed,
 };
 use skyward_ui::canvas::Drawn;
@@ -437,7 +437,7 @@ fn main() -> Result<()> {
     let adding = |app: &mut App, name: &str, security: Security, field: Field, choosing: bool| {
         app.state.adding = Some(Adding { name: name.into(), security, field, choosing });
     };
-    let pages: [PageShot; 185] = [
+    let pages: [PageShot; 197] = [
         ("11-install-light-locked", Screen::Install, false, &|app| {
             app.state.data = Data::Locked { user: 0, keys: Keys::Digits, checking: false };
         }),
@@ -923,6 +923,42 @@ fn main() -> Result<()> {
         }),
         ("116-update-dark-failed", Screen::Update, true, &|app| app.set_update(Standing::Failed(FailureCode::ExpectedMergeTarget))),
         ("117-advanced-light-merged", Screen::Advanced, false, &|app| app.set_update(Standing::Merged)),
+        ("205-kernelsu-light", Screen::KernelSu, false, &|app| app.set_kernel_su(Ok(kernel_su_status()))),
+        ("205-kernelsu-dark", Screen::KernelSu, true, &|app| app.set_kernel_su(Ok(kernel_su_status()))),
+        ("206-magisk-light", Screen::Magisk, false, &|app| app.set_magisk(Ok(magisk_status()))),
+        ("206-magisk-dark", Screen::Magisk, true, &|app| app.set_magisk(Ok(magisk_status()))),
+        ("207-modules-light", Screen::Modules, false, &|app| app.set_modules(Ok(module_rows()))),
+        ("207-modules-dark", Screen::Modules, true, &|app| app.set_modules(Ok(module_rows()))),
+        ("209-root-light", Screen::Root, false, &|app| {
+            app.set_kernel_su(Ok(kernel_su_status()));
+            app.set_magisk(Ok(magisk_status()));
+            app.set_modules(Ok(module_rows()));
+            app.state.auto_root = AutoRoot::KernelSu;
+        }),
+        ("209-root-dark", Screen::Root, true, &|app| {
+            app.set_kernel_su(Ok(kernel_su_status()));
+            app.set_magisk(Ok(magisk_status()));
+            app.set_modules(Ok(module_rows()));
+            app.state.auto_root = AutoRoot::KernelSu;
+        }),
+        ("208-module-info-light", Screen::ModuleInfo, false, &|app| {
+            app.set_modules(Ok(module_rows()));
+            app.state.module_at = Some(0);
+        }),
+        ("210-kernelsu-module-light", Screen::KernelSuModule, false, &|app| {
+            app.state.kernel_su_ko = Some("/sdcard/Download/kernelsu.ko".into());
+        }),
+        ("210-kernelsu-module-dark", Screen::KernelSuModule, true, &|app| {
+            app.state.kernel_su_ko = Some("/sdcard/Download/kernelsu.ko".into());
+        }),
+        ("211-choose-ko-light", Screen::ChooseKo(Place::Storage), false, &|app| {
+            app.set_ko_place(
+                Place::Storage,
+                String::new(),
+                Ok(vec![file("kernelsu.ko", 330_664, RAMDISK_TIME), folder("Download", 3, RAMDISK_TIME)]),
+                RAMDISK_TIME,
+            );
+        }),
         ("58-license-light", Screen::License, false, &|_| {}),
         ("59-font-license-light", Screen::FontLicense, false, &|_| {}),
         ("60-slot-dark", Screen::Slot, true, &|app| {
@@ -1063,6 +1099,37 @@ fn main() -> Result<()> {
         set(&mut app);
         let path = out.join(format!("{name}.png"));
         write_png(&path, &whole_page(&mut app, &fonts, &info))?;
+        println!("wrote {}", path.display());
+    }
+
+    // Actual screens, with the page's title and back control, which a
+    // whole-page picture leaves out.
+    let screens: [PageShot; 4] = [
+        ("root-light-screen", Screen::Root, false, &|app| {
+            app.set_kernel_su(Ok(kernel_su_status()));
+            app.set_magisk(Ok(magisk_status()));
+            app.set_modules(Ok(module_rows()));
+            app.state.auto_root = AutoRoot::KernelSu;
+        }),
+        ("kernelsu-light-screen", Screen::KernelSu, false, &|app| app.set_kernel_su(Ok(kernel_su_status()))),
+        ("magisk-light-screen", Screen::Magisk, false, &|app| app.set_magisk(Ok(magisk_status()))),
+        ("modules-light-screen", Screen::Modules, false, &|app| app.set_modules(Ok(module_rows()))),
+    ];
+    for (name, screen, dark, set) in screens {
+        let mut app = opened(Screen::Advanced, w, h, ppd);
+        let targets = if screen == Screen::Root { vec![Screen::Root] } else { vec![Screen::Root, screen] };
+        for target in targets {
+            finger_on(&mut app, &fonts, &info, Action::Open(target), 0);
+            app.touch(Touch::Up, &fonts, 100);
+            app.tick(1000);
+        }
+        app.state.dark = dark;
+        set(&mut app);
+        app.tick(1000);
+        let mut c = Canvas::new(w, h);
+        app.compose(&mut c, &fonts, &info, CLOCK, 1000);
+        let path = out.join(format!("{name}.png"));
+        write_png(&path, &c)?;
         println!("wrote {}", path.display());
     }
 
@@ -1502,6 +1569,62 @@ fn router_link() -> Link {
         mac: "02:00:00:00:00:04".into(),
         reach: Some(Reach::Online),
     }
+}
+
+/// KernelSU's page as it opens on a 17 Ultra whose kernel is 6.18.
+fn kernel_su_status() -> KernelSuStatus {
+    let rows = [
+        (12, "5.10", "android12-5.10", "boot"),
+        (13, "5.10", "android13-5.10", "boot"),
+        (13, "5.15", "android13-5.15", "init_boot"),
+        (14, "5.15", "android14-5.15", "init_boot"),
+        (14, "6.1", "android14-6.1", "init_boot"),
+        (15, "6.6", "android15-6.6", "init_boot"),
+        (16, "6.12", "android16-6.12", "init_boot"),
+        (17, "6.18", "android17-6.18", "init_boot"),
+    ];
+    KernelSuStatus {
+        installed: true,
+        has_backup: false,
+        backup_target: None,
+        version: Some("3.2.4 (32457)".into()),
+        unlocked: true,
+        slot: Some("B".into()),
+        default: Some(7),
+        kmis: rows.map(|(android, kernel, id, target)| KmiRow { id: id.into(), android, kernel: kernel.into(), target: target.into() }).to_vec(),
+    }
+}
+
+fn magisk_status() -> MagiskStatus {
+    MagiskStatus {
+        installed: false,
+        has_backup: false,
+        backup_target: None,
+        version: None,
+        unlocked: true,
+        slot: Some("B".into()),
+        target: "init_boot_b".into(),
+    }
+}
+
+fn module_rows() -> Vec<ModuleRow> {
+    [
+        ("zygisk_lsposed", "LSPosed (Zygisk)", "1.9.2 · LSPosed Developers", true, false),
+        ("zygisknext", "Zygisk Next", "1.5.3 · Dr-TSNG", true, false),
+        ("shamiko", "Shamiko", "1.2.5 · LSPosed Developers", false, false),
+        ("busybox-ndk", "BusyBox for Android", "1.36.1 · osm0sis", true, true),
+    ]
+    .into_iter()
+    .map(|(id, name, note, enabled, pending)| ModuleRow {
+        id: id.into(),
+        name: name.into(),
+        note: note.into(),
+        about: "A module the phone's own system loads.".into(),
+        enabled,
+        removing: false,
+        pending,
+    })
+    .collect()
 }
 
 /// A newer system than the 17 Ultra's own, as the update server tells of

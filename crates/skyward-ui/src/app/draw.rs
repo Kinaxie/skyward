@@ -498,7 +498,9 @@ impl App {
         }
         if frame.back {
             let (_, chip, x, y) = self.chip.as_ref().expect("a page's `<` is drawn with it");
-            out.lay(chip, *x, *y, bar);
+            // The way back stays on a page that has one, even while its
+            // bar is still folded away under the large title.
+            out.lay(chip, *x, *y, bar.max(1.0));
             if pressing == Some(Action::Back) {
                 widgets::back_held(out, t);
             } else {

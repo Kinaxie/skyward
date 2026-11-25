@@ -53,6 +53,26 @@ pub struct State {
     pub avb_verification: bool,
     /// How the last write went, or why it did not happen.
     pub avb_notice: Option<String>,
+    /// What KernelSU and the phone say, and the KMI chosen to write.
+    pub kernel_su: Option<Result<KernelSuStatus, String>>,
+    pub kernel_su_kmi: Option<usize>,
+    /// A `kernelsu.ko` the user chose rather than the one the KMI names.
+    pub kernel_su_ko: Option<String>,
+    /// The KernelSU install fetches the latest release from GitHub rather
+    /// than using the payloads carried in the recovery.
+    pub kernel_su_online: bool,
+    /// Writing KernelSU, or how it last ended.
+    pub kernel_su_job: Option<KernelSuJob>,
+    /// What Magisk and the phone say, and writing it.
+    pub magisk: Option<Result<MagiskStatus, String>>,
+    pub magisk_job: Option<KernelSuJob>,
+    /// The modules the phone's own system loads, read when the page opens.
+    pub modules: Option<Result<Vec<ModuleRow>, String>>,
+    /// The module the detail page shows, by its place in the list.
+    pub module_at: Option<usize>,
+    /// An update installed from the pages patches the new slot's boot with
+    /// the chosen root manager.
+    pub auto_root: AutoRoot,
     pub vibrate: bool,
     /// How strongly the motor taps, from 0 at the slider's left end to 1
     /// at its right.
@@ -167,6 +187,10 @@ pub struct State {
     /// of the drive.
     pub usb_drive: Option<UsbDrive>,
     pub drive: Folder,
+    /// The folders a `kernelsu.ko` is chosen in, apart from the ones the
+    /// installer's chooser shows.
+    pub ko_storage: Folder,
+    pub ko_drive: Folder,
     /// The entry the file page describes.
     pub file: Option<FileRow>,
     pub fastboot: Fastboot,
@@ -263,6 +287,16 @@ impl Default for State {
             avb_verity: true,
             avb_verification: true,
             avb_notice: None,
+            kernel_su: None,
+            kernel_su_kmi: None,
+            kernel_su_ko: None,
+            kernel_su_online: false,
+            kernel_su_job: None,
+            magisk: None,
+            magisk_job: None,
+            modules: None,
+            module_at: None,
+            auto_root: AutoRoot::None,
             vibrate: true,
             vibration: SLIDER_START,
             file_transfer: true,
@@ -313,6 +347,8 @@ impl Default for State {
             storage: Folder::new(""),
             usb_drive: None,
             drive: Folder::new(""),
+            ko_storage: Folder::new(""),
+            ko_drive: Folder::new(""),
             file: None,
             fastboot: Fastboot { running: false, link: UsbLink::Unplugged },
             erase: Erase::default(),
@@ -367,6 +403,8 @@ impl State {
             Screen::Files => &self.files,
             Screen::Choose(Place::Storage) => &self.storage,
             Screen::Choose(Place::UsbDrive) => &self.drive,
+            Screen::ChooseKo(Place::Storage) => &self.ko_storage,
+            Screen::ChooseKo(Place::UsbDrive) => &self.ko_drive,
             other => unreachable!("{other:?} lists no folder"),
         }
     }
@@ -376,6 +414,8 @@ impl State {
             Screen::Files => &mut self.files,
             Screen::Choose(Place::Storage) => &mut self.storage,
             Screen::Choose(Place::UsbDrive) => &mut self.drive,
+            Screen::ChooseKo(Place::Storage) => &mut self.ko_storage,
+            Screen::ChooseKo(Place::UsbDrive) => &mut self.ko_drive,
             other => unreachable!("{other:?} lists no folder"),
         }
     }

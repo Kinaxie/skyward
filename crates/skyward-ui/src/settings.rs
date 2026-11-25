@@ -5,7 +5,7 @@
 //! a time zone by its name in the tz database, a part or a place by its
 //! name, so a later version that lists them otherwise reads them the same.
 
-use crate::app::{Place, State, SystemZone, AOD_DATES, SCREEN_OFF, TIME_ZONES};
+use crate::app::{AutoRoot, Place, State, SystemZone, AOD_DATES, SCREEN_OFF, TIME_ZONES};
 use crate::Lang;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,11 @@ pub struct Settings {
     pub file_serve: bool,
     /// An update applied from the install page is merged there and then.
     pub merge_after: bool,
+    /// The root manager that patches the new slot after an update, by its
+    /// name; none while nothing is to be patched.
+    pub auto_root: String,
+    /// Fetch the latest KernelSU release for the next install.
+    pub kernel_su_online: bool,
     pub install: Install,
     pub backup: Backup,
     pub logs: Logs,
@@ -152,6 +157,8 @@ impl Settings {
             file_transfer: state.file_transfer,
             file_serve: state.file_serve,
             merge_after: state.merge_after,
+            auto_root: state.auto_root.name().to_string(),
+            kernel_su_online: state.kernel_su_online,
             install: Install { check_signature: state.check_signature, keep_recovery: state.keep_recovery },
             backup: Backup {
                 parts: names(&state.backup, &PARTS),
@@ -222,6 +229,10 @@ impl Settings {
         state.file_transfer = self.file_transfer;
         state.file_serve = self.file_serve;
         state.merge_after = self.merge_after;
+        if let Some(root) = AutoRoot::named(&self.auto_root) {
+            state.auto_root = root;
+        }
+        state.kernel_su_online = self.kernel_su_online;
         state.check_signature = self.install.check_signature;
         state.keep_recovery = self.install.keep_recovery;
         state.backup = picked(&self.backup.parts, &PARTS);
@@ -356,6 +367,8 @@ mod tests {
             file_transfer: false,
             check_signature: true,
             keep_recovery: false,
+            auto_root: AutoRoot::KernelSu,
+            kernel_su_online: true,
             backup: [false, true, true, true, false],
             backup_to: Place::UsbDrive,
             compress: true,
@@ -371,6 +384,8 @@ mod tests {
         assert_eq!((back.lang, back.screen_off, back.time_zone), (Lang::En, 6, zone("America/New_York")));
         assert!(!back.follow_system_zone);
         assert_eq!(back.system_zone, state.system_zone, "a zone of the system's that the pages do not list");
+        assert_eq!(back.auto_root, AutoRoot::KernelSu, "the chosen root patches the new slot after an install");
+        assert!(back.kernel_su_online, "the next KernelSU install asks for the latest release");
     }
 
     #[test]
@@ -385,6 +400,7 @@ mod tests {
         assert_eq!(json["system_time_zone"], "Europe/Rome", "by the name the system gives it");
         assert_eq!(json["backup"]["parts"], serde_json::json!(["boot", "modem"]));
         assert_eq!(json["logs"]["to"], "temporary");
+        assert_eq!(json["auto_root"], "none");
         assert_eq!(json["spoken"], "zh-Hans");
         assert!(json.get("language").is_none(), "no language is chosen until one is");
         let never = Settings::of(&State { screen_off: SCREEN_OFF.len() - 1, ..State::default() });

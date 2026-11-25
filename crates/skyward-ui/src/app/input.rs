@@ -695,18 +695,18 @@ mod tests {
         let (bx, by) = widgets::back_rect(&t).centre();
         let around = Rect::new(cx - r, cy - r, r * 2.0, r * 2.0);
         app.compose(&mut c, &f, &i, "12:00", 5000);
-        assert_eq!(grey_at(&c, cx + r * 0.6, cy), t.pal.bg.r);
+        assert_eq!(grey_at(&c, cx + r * 0.6, cy), 248, "the chip stays behind the `<` at the top of a page");
         assert_eq!(darkest(&c, around), 0);
         app.touch(Touch::Down(bx, by), &f, 6000);
         app.compose(&mut c, &f, &i, "12:00", 6000);
-        let disc = over(t.pal.button_press, t.pal.bg).r;
+        let disc = over(t.pal.button_press, Rgba::rgb(248, 248, 248)).r;
         assert_eq!(grey_at(&c, cx + r * 0.6, cy), disc, "darker at once");
         let arrow = darkest(&c, around);
         assert!(arrow.abs_diff(85) <= 2, "the stock `<` held down is 85, not {arrow}");
         // A finger moving off lets it go.
         app.touch(Touch::Move(bx, by + t.m.dp(40.0)), &f, 6050);
         app.compose(&mut c, &f, &i, "12:00", 6050);
-        assert_eq!(grey_at(&c, cx + r * 0.6, cy), t.pal.bg.r);
+        assert_eq!(grey_at(&c, cx + r * 0.6, cy), 248, "the chip comes back when the finger leaves");
         app.touch(Touch::Up, &f, 6100);
         assert_eq!(app.screen(), Screen::Mount);
 

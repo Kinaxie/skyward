@@ -135,6 +135,18 @@ impl App {
                 self.state.system_pick = None;
                 self.state.asking_delete = false;
             }
+            Screen::KernelSu => {
+                if self.state.kernel_su_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::kernel_su::BUSY), now);
+                    return fx;
+                }
+            }
+            Screen::Magisk => {
+                if self.state.magisk_job.as_ref().is_some_and(|j| j.outcome.is_none()) {
+                    self.say(l.pick(texts::magisk::BUSY), now);
+                    return fx;
+                }
+            }
             Screen::Files => {
                 if let Some(up) = self.state.files.up() {
                     return vec![Effect::ReadDir(up)];
@@ -157,6 +169,11 @@ impl App {
                     return vec![Effect::ReadPlace(place, up)];
                 }
             }
+            Screen::ChooseKo(place) => {
+                if let Some(up) = self.state.folder(Screen::ChooseKo(place)).up() {
+                    return vec![Effect::ReadKoPlace(place, up)];
+                }
+            }
             Screen::FileSearch => {
                 self.state.files_query.clear();
                 self.state.files.set_query("");
@@ -166,6 +183,8 @@ impl App {
                 self.state.file = None;
                 self.state.asking_delete = false;
             }
+            Screen::ModuleInfo => self.state.module_at = None,
+            Screen::Modules => self.state.modules = None,
             // Changes not saved are given up only by going back again while
             // the warning shows.
             Screen::Editor => {
@@ -333,9 +352,15 @@ impl App {
     pub(super) fn arrive_at(&mut self, s: Screen) -> Vec<Effect> {
         match s {
             Screen::Mount => vec![Effect::ReadMounts],
+            Screen::Advanced => vec![Effect::ReadKernelSu, Effect::ReadMagisk, Effect::ReadModules],
+            Screen::Root => vec![Effect::ReadKernelSu, Effect::ReadMagisk, Effect::ReadModules],
             Screen::Filesystems => vec![Effect::ReadFilesystems],
             Screen::Slot | Screen::Reboot => vec![Effect::ReadSlots],
             Screen::Systems => vec![Effect::ReadSystems],
+            Screen::KernelSu => vec![Effect::ReadKernelSu],
+            Screen::KernelSuKmi => vec![Effect::ReadKernelSu],
+            Screen::Magisk => vec![Effect::ReadMagisk],
+            Screen::Modules => vec![Effect::ReadModules],
             Screen::Restore => vec![self.find_backups()],
             Screen::Files => {
                 self.state.files_query.clear();
@@ -344,6 +369,7 @@ impl App {
                 vec![Effect::ReadDir(path)]
             }
             Screen::Choose(place) if self.state.place_open(place) => vec![Effect::ReadPlace(place, self.state.folder(s).path.clone())],
+            Screen::ChooseKo(place) if self.state.place_open(place) => vec![Effect::ReadKoPlace(place, self.state.folder(s).path.clone())],
             Screen::Search => {
                 self.state.search.clear();
                 self.state.layer = Layer::Letters;

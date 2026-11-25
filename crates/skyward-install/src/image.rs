@@ -385,6 +385,24 @@ pub fn is_skyward<R: Read + Seek>(file: &mut R) -> Result<bool> {
 /// The device configuration a Skyward recovery carries in its ramdisk;
 /// none when `file` is no Skyward recovery.
 pub fn device_config<R: Read + Seek>(file: &mut R) -> Result<Option<Vec<u8>>> {
+    let read = |entry: &mut dyn Read| {
+        let mut config = Vec::new();
+        entry.read_to_end(&mut config).context("read the device configuration")?;
+        Ok(config)
+    };
+    in_ramdisk(file, |name| name == skyward_config::ramdisk::CONFIG, read).context("read the ramdisk")
+}
+
+/// Whether the boot image's ramdisk has an entry whose name `wanted`
+/// picks.
+pub fn ramdisk_holds<R: Read + Seek>(file: &mut R, wanted: impl Fn(&str) -> bool) -> Result<bool> {
+    Ok(in_ramdisk(file, wanted, |_| Ok(()))?.is_some())
+}
+
+/// What `take` makes of the first entry of the boot image's ramdisk whose
+/// name `wanted` picks, read from its start; none when the image is no
+/// boot image, has no ramdisk, or no entry's name is picked.
+fn in_ramdisk<R: Read + Seek, T>(file: &mut R, wanted: impl Fn(&str) -> bool, take: impl FnOnce(&mut dyn Read) -> Result<T>) -> Result<Option<T>> {
     let mut head = Vec::with_capacity(4096);
     file.take(4096).read_to_end(&mut head).context("read the image's first bytes")?;
     if !head.starts_with(BOOT_MAGIC) {
@@ -400,12 +418,7 @@ pub fn device_config<R: Read + Seek>(file: &mut R) -> Result<Option<Vec<u8>>> {
     if ![LZ4_LEGACY, LZ4_FRAME, GZIP, NEWC].iter().any(|magic| start.starts_with(magic)) {
         return Ok(None);
     }
-    let read = |entry: &mut dyn Read| {
-        let mut config = Vec::new();
-        entry.read_to_end(&mut config).context("read the device configuration")?;
-        Ok(config)
-    };
-    find(ramdisk, |name| name == skyward_config::ramdisk::CONFIG, read).context("read the ramdisk")
+    find(ramdisk, wanted, take)
 }
 
 /// The partition `name` of `slot` among the links in `dir`.
@@ -682,6 +695,16 @@ mod tests {
 
     fn kind_of(image: &[u8]) -> Result<ImageKind> {
         Ok(open(&mut Cursor::new(image), image.len() as u64)?.kind)
+    }
+
+    #[test]
+    fn a_boot_image_is_read_for_the_entries_that_mark_a_patched_ramdisk() {
+        let stock = boot_image(0, &lz4_legacy(&archive(&["init", "prop.default"])));
+        let kernelsu = boot_image(0, &lz4_legacy(&archive(&["init", "kernelsu.ko"])));
+        let magisk = boot_image(0, &lz4_legacy(&archive(&["init", ".backup/.magisk"])));
+        assert!(!ramdisk_holds(&mut Cursor::new(&stock), |name| name == "kernelsu.ko").unwrap());
+        assert!(ramdisk_holds(&mut Cursor::new(&kernelsu), |name| name == "kernelsu.ko").unwrap());
+        assert!(ramdisk_holds(&mut Cursor::new(&magisk), |name| name == ".backup/.magisk").unwrap());
     }
 
     #[test]

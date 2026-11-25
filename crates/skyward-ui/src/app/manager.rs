@@ -280,6 +280,21 @@ fn installable(e: &FileRow) -> bool {
     }
 }
 
+/// Whether the chooser offers an entry as a KernelSU module: the folders to
+/// look in, and the `.ko` files themselves.
+fn choose_ko(e: &FileRow) -> bool {
+    if e.name.starts_with('.') {
+        return false;
+    }
+    match e.kind {
+        FileKind::Folder { .. } | FileKind::Link { folder: true, .. } => true,
+        FileKind::File | FileKind::Link { folder: false, .. } => {
+            std::path::Path::new(&e.name).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ko"))
+        }
+        FileKind::Special => false,
+    }
+}
+
 /// Whether the installer takes a file by its name: an update package, a
 /// zip that installs itself, or a partition image.
 pub(crate) fn installs(e: &FileRow) -> bool {
@@ -385,6 +400,13 @@ impl App {
         self.show_folder(Screen::Choose(place), folder, files, listed);
     }
 
+    /// The runtime listed a folder of `place` for choosing a `kernelsu.ko`:
+    /// it becomes the folder shown there, with the modules it holds.
+    pub fn set_ko_place(&mut self, place: Place, folder: String, files: Result<Vec<FileRow>, String>, listed: i64) {
+        let files = files.map(|entries| entries.into_iter().filter(choose_ko).collect());
+        self.show_folder(Screen::ChooseKo(place), folder, files, listed);
+    }
+
     /// The runtime found the USB drive plugged in, shown or not, or found
     /// none. Another drive, or none, starts its folders over from the top,
     /// and one shown while its page is up is read at once. The backups
@@ -396,6 +418,12 @@ impl App {
         }
         self.state.usb_drive = drive;
         self.state.drive = Folder::new("");
+        self.state.ko_drive = Folder::new("");
+        if !self.state.place_open(Place::UsbDrive)
+            && self.state.kernel_su_ko.as_deref().is_some_and(|path| std::path::Path::new(path).starts_with(USB_DRIVE))
+        {
+            self.state.kernel_su_ko = None;
+        }
         self.refresh();
         let gone = !self.state.place_open(Place::UsbDrive) && self.state.restore.as_ref().is_some_and(|(e, _)| e.place == Place::UsbDrive);
         match self.screen() {
@@ -413,6 +441,9 @@ impl App {
         }
         let page = Screen::Choose(Place::UsbDrive);
         if self.screen() != page {
+            if self.screen() == Screen::ChooseKo(Place::UsbDrive) {
+                return self.arrive_at(Screen::ChooseKo(Place::UsbDrive));
+            }
             return Vec::new();
         }
         *self.top_mut() = (page, 0.0, Focus::Unset);

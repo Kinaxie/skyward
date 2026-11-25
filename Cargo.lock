@@ -2484,6 +2484,8 @@ dependencies = [
  "hex",
  "libc",
  "procfs",
+ "serde_json",
+ "sha2 0.10.9",
  "skyward-backup",
  "skyward-binder",
  "skyward-block",
@@ -2498,6 +2500,7 @@ dependencies = [
  "skyward-net",
  "skyward-omapi",
  "skyward-programs",
+ "skyward-root",
  "skyward-sys",
  "skyward-systems",
  "skyward-ui",
@@ -2746,6 +2749,10 @@ dependencies = [
  "skyward-sys",
  "tempfile",
 ]
+
+[[package]]
+name = "skyward-root"
+version = "0.5.1"
 
 [[package]]
 name = "skyward-sys"

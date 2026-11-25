@@ -1,6 +1,6 @@
 use crate::app::{
-    Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
-    FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, Pick, Place, Region, Rows,
+    Action, AutoRoot, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
+    FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, KernelSuEnd, Keys, Pick, Place, Region, Rows,
     Screen, SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe,
     ADDABLE, AOD_DATES, BACKUP_PARTS, DATA_PART, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, MEDIA_PART, SCREEN_OFF, SORT_KEYS, TARGETS, TIME_ZONES,
     UTC, WIPES, installs, listed, starting,
@@ -70,6 +70,7 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::Mount => mount(cx),
         Screen::Install => install(cx),
         Screen::Choose(place) => choose(cx, place),
+        Screen::ChooseKo(place) => choose_ko(cx, place),
         Screen::Installing => installing(cx),
         Screen::About => about(cx),
         Screen::Specs => specs(cx),
@@ -97,6 +98,13 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::AodDate => aod_date_page(cx),
         Screen::FileSort => file_sort_page(cx),
         Screen::Avb => avb_page(cx),
+        Screen::Root => root(cx),
+        Screen::KernelSu => kernel_su(cx),
+        Screen::KernelSuKmi => kernel_su_kmi(cx),
+        Screen::KernelSuModule => kernel_su_module(cx),
+        Screen::Magisk => magisk(cx),
+        Screen::Modules => modules(cx),
+        Screen::ModuleInfo => module_info(cx),
         Screen::Output => output(cx),
         Screen::Logs => logs(cx),
         Screen::Update => update(cx),
@@ -143,6 +151,8 @@ pub fn confirm_label(which: Confirm, s: &State) -> (&'static str, bool) {
         Confirm::Merge => (confirm::MERGE, true),
         Confirm::Relabel => (confirm::FIX, true),
         Confirm::Avb => (texts::local::AVB_WRITE, true),
+        Confirm::KernelSu => (texts::kernel_su::INSTALL, true),
+        Confirm::Magisk => (texts::magisk::INSTALL, true),
         Confirm::SwitchSystem => (confirm::SWITCH_AND_REBOOT, false),
         Confirm::RemoveSystem => (confirm::REMOVE, true),
         Confirm::InstallSystem => (confirm::INSTALL, false),
@@ -305,6 +315,93 @@ pub fn home(cx: &Ctx) -> Frame {
     // away.
     let height = fitted(t, system.bottom).max(t.m.h + fold.span.ceil() as u32);
     Frame { back: false, fold: Some(fold), ..Frame::new(t, c.crop_height(height), out, HOME_TITLE, cards_top) }
+}
+
+/// Root's own page: the managers installed, their modules, and the switch
+/// that patches the new slot after an install.
+pub fn root(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let mut rows = Vec::new();
+    let mut acts = Vec::new();
+    let kernel = kernel_su_value(cx);
+    let magisk = magisk_value(cx);
+    let modules = modules_value(cx);
+    rows.push(
+        Row::new(l.pick(texts::kernel_su::TITLE))
+            .icon(Rgba::rgb(0x1e, 0x11, 0x0d), Icon::KernelSu)
+            .trail(kernel.as_deref().map_or(Trail::Arrow, Trail::Value)),
+    );
+    acts.push(Action::Open(Screen::KernelSu));
+    rows.push(
+        Row::new(l.pick(texts::magisk::TITLE))
+            .icon(Rgba::rgb(0x00, 0xaf, 0x9c), Icon::Magisk)
+            .trail(magisk.as_deref().map_or(Trail::Arrow, Trail::Value)),
+    );
+    acts.push(Action::Open(Screen::Magisk));
+    rows.push(
+        Row::new(l.pick(texts::modules::TITLE)).icon(PURPLE, Icon::Layers).trail(modules.as_deref().map_or(Trail::Arrow, Trail::Value)),
+    );
+    acts.push(Action::Open(Screen::Modules));
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let mut out = hits(&list.rows, &acts);
+    let section = widgets::section(&mut c, t, f, list.bottom + t.m.card_gap, l.pick(texts::root::AUTO_PATCH));
+    let choices = [AutoRoot::None, AutoRoot::KernelSu, AutoRoot::Magisk];
+    let labels = [l.pick(texts::root::NONE), l.pick(texts::kernel_su::TITLE), l.pick(texts::magisk::TITLE)];
+    let auto_rows: Vec<Row> = choices
+        .iter()
+        .zip(labels)
+        .map(|(choice, label)| Row::new(label).trail(Trail::Check(s.auto_root == *choice)))
+        .collect();
+    let auto = widgets::list(&mut c, t, f, section, &auto_rows);
+    out.extend(hits(&auto.rows, &choices.map(Action::SetAutoRoot)));
+    let y = widgets::footnote(&mut c, t, f, auto.bottom, l.pick(texts::root::AUTO_PATCH_NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::root::TITLE), top)
+}
+
+/// What the page says beside its KernelSU entry once it has been read.
+fn kernel_su_value(cx: &Ctx) -> Option<String> {
+    let l = cx.state.lang;
+    match &cx.state.kernel_su {
+        None => None,
+        Some(Err(_)) => Some(l.pick(texts::kernel_su::NOT_READ).to_string()),
+        Some(Ok(status)) if status.installed => Some(status.version.clone().unwrap_or_else(|| l.pick(texts::kernel_su::INSTALLED).to_string())),
+        Some(Ok(_)) => Some(l.pick(texts::kernel_su::NOT_INSTALLED).to_string()),
+    }
+}
+
+/// What the page says beside its Magisk entry once it has been read.
+fn magisk_value(cx: &Ctx) -> Option<String> {
+    let l = cx.state.lang;
+    match &cx.state.magisk {
+        None => None,
+        Some(Err(_)) => Some(l.pick(texts::kernel_su::NOT_READ).to_string()),
+        Some(Ok(status)) if status.installed => Some(status.version.clone().unwrap_or_else(|| l.pick(texts::kernel_su::INSTALLED).to_string())),
+        Some(Ok(_)) => Some(l.pick(texts::kernel_su::NOT_INSTALLED).to_string()),
+    }
+}
+
+/// What the page says beside its Root entry: the manager installed, if one
+/// has been read.
+fn root_value(cx: &Ctx) -> Option<&'static str> {
+    let l = cx.state.lang;
+    match (&cx.state.kernel_su, &cx.state.magisk) {
+        (Some(Ok(k)), _) if k.installed => Some(l.pick(texts::kernel_su::TITLE)),
+        (_, Some(Ok(m))) if m.installed => Some(l.pick(texts::magisk::TITLE)),
+        (Some(Ok(_)), Some(Ok(_))) => Some(l.pick(texts::kernel_su::NOT_INSTALLED)),
+        _ => None,
+    }
+}
+
+/// What the page says beside its module entry once the folders are read.
+fn modules_value(cx: &Ctx) -> Option<String> {
+    let l = cx.state.lang;
+    match &cx.state.modules {
+        None => None,
+        Some(Err(_)) => Some(l.pick(texts::modules::NOT_READ).to_string()),
+        Some(Ok(list)) => Some(list.len().to_string()),
+    }
 }
 
 /// What the home page says beside its entry to the systems: the one that
@@ -568,6 +665,339 @@ pub fn avb_page(cx: &Ctx) -> Frame {
     let note = l.pick(texts::local::AVB_NOTE);
     let y = widgets::footnote(&mut c, t, f, y, note);
     Frame::new(t, fit(c, t, y), out, "AVB", top)
+}
+
+/// The KMI KernelSU writes: one row each, the kernel's own picked first.
+pub fn kernel_su_kmi(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let status = match &s.kernel_su {
+        Some(Ok(status)) => status,
+        Some(Err(why)) => {
+            let mut row = Row::new(l.pick(texts::kernel_su::NOT_READ));
+            row.sub = Some(why.as_str());
+            let list = widgets::list(&mut c, t, f, top, &[row]);
+            return Frame::new(t, fit(c, t, list.bottom), Vec::new(), l.pick(texts::kernel_su::KMI), top);
+        }
+        None => {
+            let y = widgets::footnote(&mut c, t, f, top, l.pick(texts::kernel_su::READING));
+            return Frame::new(t, fit(c, t, y), Vec::new(), l.pick(texts::kernel_su::KMI), top);
+        }
+    };
+    let chosen = s.kernel_su_kmi.or(status.default).unwrap_or(0);
+    let labels: Vec<String> = status.kmis.iter().map(|k| format!("Android {} · {}", k.android, k.kernel)).collect();
+    let rows: Vec<Row> = labels
+        .iter()
+        .zip(&status.kmis)
+        .enumerate()
+        .map(|(at, (label, kmi))| Row::new(label).icon(BLUE, Icon::Layers).subtitle(&kmi.target).trail(Trail::Check(at == chosen)))
+        .collect();
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    let out = hits(&list.rows, &(0..status.kmis.len()).map(Action::KernelSuKmi).collect::<Vec<_>>());
+    let y = widgets::footnote(&mut c, t, f, list.bottom, l.pick(texts::kernel_su::NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::kernel_su::KMI), top)
+}
+
+/// KernelSU's kernel module: the one its KMI carries, or a `kernelsu.ko`
+/// chosen from internal storage or a USB drive.
+pub fn kernel_su_module(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let mut out = Vec::new();
+    let current = s.kernel_su_ko.as_deref().unwrap_or_else(|| l.pick(texts::kernel_su::BUILT_IN));
+    let facts = [(l.pick(texts::kernel_su::LOCAL_MODULE), current.to_string())];
+    let mut y = widgets::info_card(&mut c, t, f, top, &facts);
+    y += t.m.dp(10.0);
+    let usb = match &s.usb_drive {
+        Some(UsbDrive::Shown) => texts::install::CHOOSE_ON_USB_DRIVE,
+        Some(UsbDrive::Unreadable(_)) => texts::usb_drive::UNREADABLE,
+        None => texts::usb_drive::WANTED,
+    };
+    // Internal storage opens with the data partition, which the decrypt
+    // page opens or tells why it does not.
+    let (storage, storage_action) = if s.data.storage_open() {
+        (texts::kernel_su::CHOOSE_KO, Action::Open(Screen::ChooseKo(Place::Storage)))
+    } else if s.data == Data::Erased {
+        (texts::data::ERASED, Action::Open(Screen::Decrypt))
+    } else {
+        (texts::decrypt::NEEDED, Action::Open(Screen::Decrypt))
+    };
+    let rows = [
+        Row::new(place_name(l, Place::Storage)).icon(BLUE, Icon::Phone).subtitle(l.pick(storage)),
+        Row::new(place_name(l, Place::UsbDrive)).icon(PURPLE, Icon::UsbDrive).subtitle(l.pick(usb)),
+        Row::new(l.pick(texts::kernel_su::BUILT_IN)).icon(BLUE, Icon::Layers).trail(Trail::Check(s.kernel_su_ko.is_none())),
+    ];
+    let list = widgets::list(&mut c, t, f, y, &rows);
+    out.extend(hits(&list.rows, &[
+        storage_action,
+        Action::Open(Screen::ChooseKo(Place::UsbDrive)),
+        Action::KernelSuModuleBuiltIn,
+    ]));
+    let y = widgets::footnote(&mut c, t, f, list.bottom, l.pick(texts::kernel_su::KO_NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::kernel_su::LOCAL_MODULE), top)
+}
+
+/// KernelSU's payloads: the KMI the kernel picks first, any other the user
+/// chooses, and the swipe that writes the chosen one into the current slot.
+pub fn kernel_su(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let mut out = Vec::new();
+    let status = match &s.kernel_su {
+        None => {
+            let y = widgets::footnote(&mut c, t, f, top, l.pick(texts::kernel_su::READING));
+            return Frame::new(t, fit(c, t, y), out, l.pick(texts::kernel_su::TITLE), top);
+        }
+        Some(Err(why)) => {
+            let mut row = Row::new(l.pick(texts::kernel_su::NOT_READ));
+            row.sub = Some(why.as_str());
+            let list = widgets::list(&mut c, t, f, top, &[row]);
+            return Frame::new(t, fit(c, t, list.bottom), out, l.pick(texts::kernel_su::TITLE), top);
+        }
+        Some(Ok(status)) => status,
+    };
+    let chosen = s.kernel_su_kmi.or(status.default).unwrap_or(0);
+    let picked = status.kmis.get(chosen);
+    let state = l.pick(if status.installed { texts::kernel_su::INSTALLED } else { texts::kernel_su::NOT_INSTALLED }).to_string();
+    let facts = [
+        (l.pick(texts::kernel_su::STATUS), state),
+        (l.pick(texts::fonts::VERSION), status.version.clone().unwrap_or_else(|| l.pick(texts::kernel_su::NONE).to_string())),
+        (l.pick(texts::kernel_su::TARGET), picked.map(|k| k.target.clone()).unwrap_or_default()),
+    ];
+    let mut y = widgets::info_card(&mut c, t, f, top, &facts);
+    y += t.m.dp(10.0);
+    let kmi_value = picked.map(|k| k.id.clone()).unwrap_or_else(|| l.pick(texts::kernel_su::NONE).to_string());
+    let kmi = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[Row::new(l.pick(texts::kernel_su::KMI)).icon(BLUE, Icon::Layers).trail(Trail::Value(&kmi_value))],
+    );
+    out.extend(hits(&kmi.rows, &[Action::Open(Screen::KernelSuKmi)]));
+    y = kmi.bottom + t.m.card_gap;
+    let module_value = s
+        .kernel_su_ko
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| l.pick(texts::kernel_su::BUILT_IN).to_string());
+    let module = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[Row::new(l.pick(texts::kernel_su::LOCAL_MODULE)).icon(BLUE, Icon::Layers).trail(Trail::Value(&module_value))],
+    );
+    out.extend(hits(&module.rows, &[Action::Open(Screen::KernelSuModule)]));
+    y = module.bottom + t.m.card_gap;
+
+    if let Some(job) = &s.kernel_su_job {
+        let (title, detail, done) = match &job.outcome {
+            None => (l.pick(texts::kernel_su::WORKING), picked.map(|k| format!("{} · {}", k.id, k.target)).unwrap_or_default(), None),
+            Some(KernelSuEnd::Failed(_)) => (l.pick(texts::kernel_su::FAILED), String::new(), Some(0.0)),
+            Some(KernelSuEnd::Installed { target, .. } | KernelSuEnd::Restored { target }) => {
+                (l.pick(texts::common::DONE), target.clone(), Some(1.0))
+            }
+        };
+        y = widgets::progress_card(&mut c, t, f, y, title, &detail, done);
+        if let Some(outcome) = &job.outcome {
+            let said = match outcome {
+                KernelSuEnd::Installed { target, backup, manager } => {
+                    format!("{} {target} · {backup} · {manager}", l.pick(texts::kernel_su::INSTALLED_TO))
+                }
+                KernelSuEnd::Restored { target } => format!("{} {target}", l.pick(texts::kernel_su::RESTORED)),
+                KernelSuEnd::Failed(why) => format!("{} {why}", l.pick(texts::kernel_su::FAILED)),
+            };
+            y = widgets::footnote(&mut c, t, f, y, &said);
+        }
+        if let Some(version) = &job.fetched {
+            let said = format!("{} {version}", l.pick(texts::kernel_su::DOWNLOADED));
+            y = widgets::footnote(&mut c, t, f, y, &said);
+        }
+        if let Some(why) = &job.fallback {
+            let said = format!("{} {why}", l.pick(texts::kernel_su::FALLBACK));
+            y = widgets::footnote(&mut c, t, f, y, &said);
+        }
+        let y = widgets::footnote(&mut c, t, f, y, l.pick(texts::kernel_su::NOTE));
+        return Frame::new(t, fit(c, t, y), out, l.pick(texts::kernel_su::TITLE), top);
+    }
+
+    let online = widgets::list(
+        &mut c,
+        t,
+        f,
+        y,
+        &[Row::new(l.pick(texts::kernel_su::ONLINE)).icon(BLUE, Icon::Globe).trail(Trail::Switch(s.kernel_su_online))],
+    );
+    out.extend(hits(&online.rows, &[Action::Toggle(Switch::KernelSuOnline)]));
+    y = online.bottom + t.m.card_gap;
+    y = widgets::footnote(&mut c, t, f, y, l.pick(texts::kernel_su::ONLINE_NOTE));
+
+    if status.has_backup {
+        let restore_target = status.backup_target.as_deref().or_else(|| picked.map(|k| k.target.as_str())).unwrap_or("boot");
+        let restore_label = texts::kernel_su::restore_target(l, restore_target);
+        let restore = widgets::list(&mut c, t, f, y, &[Row::new(&restore_label).icon(BLUE, Icon::Restore)]);
+        out.extend(hits(&restore.rows, &[Action::RestoreKernelSu]));
+        y = restore.bottom + t.m.card_gap;
+    }
+
+    let (label, danger) = confirm_label(Confirm::KernelSu, s);
+    let track = widgets::confirm(&mut c, t, f, y + t.m.dp(18.0), label, danger, s.confirm);
+    out.push(Hit { rect: track, action: Action::Confirm(Confirm::KernelSu) });
+    y = track.y + track.h;
+    y = widgets::footnote(&mut c, t, f, y + t.m.dp(8.0), l.pick(texts::kernel_su::NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::kernel_su::TITLE), top)
+}
+
+/// Magisk's boot patcher: the current slot, the target Magisk picks, and the
+/// swipe that writes it.
+pub fn magisk(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let mut out = Vec::new();
+    let status = match &s.magisk {
+        None => {
+            let y = widgets::footnote(&mut c, t, f, top, l.pick(texts::kernel_su::READING));
+            return Frame::new(t, fit(c, t, y), out, l.pick(texts::magisk::TITLE), top);
+        }
+        Some(Err(why)) => {
+            let mut row = Row::new(l.pick(texts::kernel_su::NOT_READ));
+            row.sub = Some(why.as_str());
+            let list = widgets::list(&mut c, t, f, top, &[row]);
+            return Frame::new(t, fit(c, t, list.bottom), out, l.pick(texts::magisk::TITLE), top);
+        }
+        Some(Ok(status)) => status,
+    };
+    let state = l.pick(if status.installed { texts::kernel_su::INSTALLED } else { texts::kernel_su::NOT_INSTALLED }).to_string();
+    let facts = [
+        (l.pick(texts::kernel_su::STATUS), state),
+        (l.pick(texts::fonts::VERSION), status.version.clone().unwrap_or_else(|| l.pick(texts::kernel_su::NONE).to_string())),
+        (l.pick(texts::kernel_su::TARGET), status.target.clone()),
+    ];
+    let mut y = widgets::info_card(&mut c, t, f, top, &facts);
+    y += t.m.dp(10.0);
+
+    if let Some(job) = &s.magisk_job {
+        let title = l.pick(texts::magisk::WORKING);
+        y = widgets::progress_card(&mut c, t, f, y, title, &status.target, None);
+        if let Some(outcome) = &job.outcome {
+            let said = match outcome {
+                KernelSuEnd::Installed { target, backup, manager } => {
+                    format!("{} {target} · {backup} · {manager}", l.pick(texts::kernel_su::INSTALLED_TO))
+                }
+                KernelSuEnd::Restored { target } => format!("{} {target}", l.pick(texts::kernel_su::RESTORED)),
+                KernelSuEnd::Failed(why) => format!("{} {why}", l.pick(texts::kernel_su::FAILED)),
+            };
+            y = widgets::footnote(&mut c, t, f, y, &said);
+        }
+        let y = widgets::footnote(&mut c, t, f, y, l.pick(texts::magisk::NOTE));
+        return Frame::new(t, fit(c, t, y), out, l.pick(texts::magisk::TITLE), top);
+    }
+
+    if status.has_backup {
+        let restore_target = status.backup_target.as_deref().unwrap_or(&status.target);
+        let restore_label = texts::kernel_su::restore_target(l, restore_target);
+        let restore = widgets::list(&mut c, t, f, y, &[Row::new(&restore_label).icon(BLUE, Icon::Restore)]);
+        out.extend(hits(&restore.rows, &[Action::RestoreMagisk]));
+        y = restore.bottom + t.m.card_gap;
+    }
+
+    let (label, danger) = confirm_label(Confirm::Magisk, s);
+    let track = widgets::confirm(&mut c, t, f, y + t.m.dp(18.0), label, danger, s.confirm);
+    out.push(Hit { rect: track, action: Action::Confirm(Confirm::Magisk) });
+    y = track.y + track.h;
+    y = widgets::footnote(&mut c, t, f, y + t.m.dp(8.0), l.pick(texts::magisk::NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::magisk::TITLE), top)
+}
+
+/// The modules the phone's own system loads, each with its switch.
+pub fn modules(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let mut out = Vec::new();
+    let mut rows = Vec::new();
+    let mut opens = Vec::new();
+    match &s.modules {
+        None => rows.push(Row::new(l.pick(texts::modules::READING))),
+        Some(Err(why)) => {
+            let mut row = Row::new(l.pick(texts::modules::NOT_READ));
+            row.sub = Some(why.as_str());
+            rows.push(row);
+        }
+        Some(Ok(list)) if list.is_empty() => rows.push(Row::new(l.pick(texts::modules::EMPTY))),
+        Some(Ok(list)) => {
+            for (at, m) in list.iter().enumerate() {
+                let sub = match (m.enabled, m.removing, m.pending, m.note.is_empty()) {
+                    (_, true, _, _) => l.pick(texts::modules::REMOVING),
+                    (true, false, true, _) => l.pick(texts::modules::PENDING),
+                    (false, false, _, _) => l.pick(texts::local::AVB_OFF),
+                    (true, false, false, false) => m.note.as_str(),
+                    (true, false, false, true) => m.about.as_str(),
+                };
+                rows.push(Row::new(&m.name).icon(BLUE, Icon::Layers).subtitle(sub).trail(Trail::Switch(m.enabled)));
+                opens.push(Action::ModuleOpen(at));
+            }
+        }
+    }
+    let list = widgets::list(&mut c, t, f, top, &rows);
+    out.extend(hits(&list.rows, &opens));
+    // The switch is part of the row that opens the module, so its own
+    // touch target goes over the row: the switch turns it off and on, the
+    // rest of the row opens it.
+    for (at, row) in list.rows.iter().enumerate() {
+        if matches!(s.modules.as_ref(), Some(Ok(list)) if at < list.len()) {
+            let w = t.m.dp(88.0);
+            out.push(Hit { rect: Rect::new(row.x + row.w - w, row.y, w, row.h), action: Action::ModuleToggle(at) });
+        }
+    }
+    let y = widgets::footnote(&mut c, t, f, list.bottom, l.pick(texts::modules::NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::modules::TITLE), top)
+}
+
+/// One module: what it says of itself, its switch, and its removal mark.
+pub fn module_info(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let top = t.m.content_top;
+    let at = s.module_at.unwrap_or(0);
+    let picked = match &s.modules {
+        Some(Ok(list)) => list.get(at),
+        _ => None,
+    };
+    let Some(m) = picked else {
+        return Frame::new(t, c, Vec::new(), l.pick(texts::modules::TITLE), top);
+    };
+    let state = match (m.enabled, m.removing) {
+        (true, true) => l.pick(texts::modules::REMOVING),
+        (true, false) => l.pick(texts::local::AVB_ON),
+        (false, _) => l.pick(texts::local::AVB_OFF),
+    };
+    let facts = [
+        (l.pick(texts::fonts::VERSION), m.note.clone()),
+        (l.pick(texts::kernel_su::STATUS), state.to_string()),
+        (l.pick(texts::common::LOCATION), format!("/data/adb/modules/{}", m.id)),
+    ];
+    let y = widgets::info_card(&mut c, t, f, top, &facts);
+    let switch_label = l.pick(if m.enabled { texts::modules::TURN_OFF } else { texts::modules::TURN_ON });
+    let switched =
+        widgets::list(&mut c, t, f, y + t.m.dp(10.0), &[Row::new(switch_label).icon(BLUE, Icon::Layers).trail(Trail::Switch(m.enabled))]);
+    let remove_label = l.pick(if m.removing { texts::modules::KEEP } else { texts::modules::UNINSTALL });
+    let removed = widgets::list(
+        &mut c,
+        t,
+        f,
+        switched.bottom + t.m.card_gap,
+        &[Row::new(remove_label).icon(RED, Icon::Wipe).tint(t.pal.danger).trail(Trail::None)],
+    );
+    let mut out = hits(&switched.rows, &[Action::ModuleToggle(at)]);
+    out.extend(hits(&removed.rows, &[Action::ModuleRemove(at)]));
+    let y = widgets::footnote(&mut c, t, f, removed.bottom, l.pick(texts::modules::UNINSTALL_NOTE));
+    Frame::new(t, fit(c, t, y), out, l.pick(texts::modules::TITLE), top)
 }
 
 /// What flashing and decrypting have said, this phone's own details, and
@@ -2188,6 +2618,7 @@ pub fn advanced(cx: &Ctx) -> Frame {
         Row::new(l.pick(texts::page::FILESYSTEMS)).icon(RED, Icon::Mount),
         Row::new(l.pick(texts::page::LOGS)).icon(ORANGE, Icon::Log),
         Row::new(l.pick(texts::local::OUTPUT_TITLE)).icon(SLATE, Icon::Terminal),
+        Row::new(l.pick(texts::root::TITLE)).icon(RED, Icon::Shield).trail(root_value(cx).map_or(Trail::Arrow, Trail::Value)),
         Row::new(l.pick(texts::page::UPDATE)).icon(GREEN, Icon::Layers).trail(Trail::Value(update_value(cx))),
     ]);
     let out = hits(&tools.rows, &[
@@ -2197,6 +2628,7 @@ pub fn advanced(cx: &Ctx) -> Frame {
         Action::Open(Screen::Filesystems),
         Action::Open(Screen::Logs),
         Action::Open(Screen::Output),
+        Action::Open(Screen::Root),
         Action::Open(Screen::Update),
     ]);
     Frame::new(t, c, out, l.pick(texts::page::ADVANCED), top)
@@ -3008,6 +3440,23 @@ pub fn choose(cx: &Ctx, place: Place) -> Frame {
     listing(cx, s.folder(Screen::Choose(place)), place_name(l, place), absent, empty, Action::ChooseEntry, l.pick(texts::choose::TITLE), 0)
 }
 
+/// A place's folders and the `.ko` modules in them, to choose one as
+/// KernelSU's module.
+pub fn choose_ko(cx: &Ctx, place: Place) -> Frame {
+    let (s, l) = (cx.state, cx.state.lang);
+    let unreadable;
+    let absent = match (place, &s.usb_drive) {
+        (Place::UsbDrive, None) => Some((l.pick(texts::choose::NO_USB_DRIVE), l.pick(texts::choose::CONNECT_USB_DRIVE))),
+        (Place::UsbDrive, Some(UsbDrive::Unreadable(why))) => {
+            unreadable = texts::choose::usb_drive_format(l, why);
+            Some((l.pick(texts::usb_drive::UNREADABLE), unreadable.as_str()))
+        }
+        _ => None,
+    };
+    let empty = l.pick(texts::choose::NONE);
+    listing(cx, s.folder(Screen::ChooseKo(place)), place_name(l, place), absent, empty, Action::ChooseKoEntry, l.pick(texts::kernel_su::LOCAL_MODULE), 0)
+}
+
 /// A folder laid out as the stock file manager lays one out: the path as
 /// capsules from `top`, held under the bar once scrolled there, then the
 /// entries in one list on the plain page, each row drawn as it scrolls into
@@ -3050,7 +3499,7 @@ fn listing(
 /// drawn as the row comes into view.
 pub fn row(screen: Screen, cx: &Ctx, i: usize, c: &mut Canvas) {
     match screen {
-        Screen::Files | Screen::Choose(_) | Screen::FileSearch => {
+        Screen::Files | Screen::Choose(_) | Screen::ChooseKo(_) | Screen::FileSearch => {
             let folder = if screen == Screen::FileSearch { &cx.state.files } else { cx.state.folder(screen) };
             let entries = folder.entries.as_ref().expect("a folder listed draws its rows");
             files::row(c, cx.t, cx.f, cx.state.lang, &entries[i], folder.listed, cx.state.zone());
@@ -3094,6 +3543,10 @@ pub fn file_info(cx: &Ctx) -> Frame {
         let image = Path::new(&e.name).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("img"));
         rows.push(Row::new(l.pick(if image { texts::files::FLASH } else { texts::page::INSTALL })));
         acts.push(Action::InstallEntry);
+    }
+    if e.kind == FileKind::File && Path::new(&e.name).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("zip")) {
+        rows.push(Row::new(l.pick(texts::modules::INSTALL_ZIP)));
+        acts.push(Action::InstallAsModule);
     }
     // The list opens the text and code it knows by extension itself; a
     // file it left here may still be text, so the editor is offered for

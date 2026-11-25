@@ -23,6 +23,8 @@ mod input;
 mod keys;
 #[cfg(target_os = "android")]
 mod merge;
+#[cfg(any(target_os = "android", test))]
+mod modules;
 #[cfg(target_os = "android")]
 mod partwork;
 #[cfg(target_os = "android")]
@@ -31,6 +33,8 @@ mod pty;
 mod readings;
 #[cfg(target_os = "android")]
 mod relabel;
+#[cfg(target_os = "android")]
+mod root;
 #[cfg(target_os = "android")]
 mod secure;
 #[cfg(target_os = "android")]
