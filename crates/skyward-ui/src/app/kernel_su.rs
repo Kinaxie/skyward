@@ -140,6 +140,24 @@ impl App {
         self.report(&said, now);
     }
 
+    /// The phone cannot leave while KernelSU is being written.
+    pub fn report_kernel_su_busy(&mut self, now: u64) {
+        let said = self.state.lang.pick(texts::kernel_su::BUSY);
+        self.report(said, now);
+    }
+
+    /// The phone cannot leave while Magisk is being written.
+    pub fn report_magisk_busy(&mut self, now: u64) {
+        let said = self.state.lang.pick(texts::magisk::BUSY);
+        self.report(said, now);
+    }
+
+    /// The phone cannot leave while an update's snapshots are merging.
+    pub fn report_merging(&mut self, now: u64) {
+        let said = self.state.lang.pick(texts::update::MERGING);
+        self.report(said, now);
+    }
+
     /// The KMI the page would write.
     pub fn kernel_su_kmi(&self) -> Option<&KmiRow> {
         let status = self.state.kernel_su.as_ref()?.as_ref().ok()?;

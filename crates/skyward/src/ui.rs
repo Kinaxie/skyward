@@ -3142,6 +3142,20 @@ impl Pages<'_> {
             // Leaving is the user's answer to whatever the request
             // still kept in misc asked.
             Effect::Reboot(target) => {
+                // Leaving while a merge or a boot image write is under way
+                // is what leaves the phone unable to start.
+                if self.merger.is_some() {
+                    self.app.report_merging(now);
+                    return Ok(Vec::new());
+                }
+                if self.root_worker.is_some() {
+                    self.app.report_kernel_su_busy(now);
+                    return Ok(Vec::new());
+                }
+                if self.magisk_worker.is_some() {
+                    self.app.report_magisk_busy(now);
+                    return Ok(Vec::new());
+                }
                 self.done_with_request()?;
                 put_radio_away(&mut self.wlan);
                 power(target)?
