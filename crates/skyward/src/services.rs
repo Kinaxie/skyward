@@ -72,6 +72,29 @@ pub fn start(programs: &[Started], libraries: Option<&Path>) -> Result<()> {
         }
         let optional = program.service.optional;
         let path = program.service.path.clone();
+        let probe = program.service.clone();
+        if !probe.oneshot {
+            // The phone's own init may have started this program already.
+            // Keep that one where it has become what it says it will be: a
+            // second copy would contend for the same sockets and service
+            // name. One that has not, as a key service started before the
+            // directory it registers with, is ended and started again now
+            // that it can.
+            if program.anew {
+                end_left(&probe)?;
+            } else if let Some(pid) = running(&probe.path) {
+                match ready(&probe) {
+                    Ok(()) => {
+                        skyward_sys::kmsg(&format!("{} is already running as pid {pid}", probe.path))?;
+                        continue;
+                    }
+                    Err(e) => {
+                        skyward_sys::kmsg(&format!("{} (pid {pid}) is not ready, so it is started anew: {e:#}", probe.path))?;
+                        end_left(&probe)?;
+                    }
+                }
+            }
+        }
         let (s, who, given) = match readied(program, libraries, &known) {
             Ok(ready) => ready,
             Err(e) if optional => {
@@ -85,9 +108,6 @@ pub fn start(programs: &[Started], libraries: Option<&Path>) -> Result<()> {
             ensure!(status.success(), "{} {} ended: {status}", s.path, s.args.join(" "));
             skyward_sys::kmsg(&format!("ran {} {}", s.path, s.args.join(" ")))?;
             continue;
-        }
-        if program.anew {
-            end_left(&s)?;
         }
         // A property the program an earlier run of the recovery service
         // started has set says nothing of the one started now, which the
