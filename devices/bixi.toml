@@ -216,7 +216,7 @@ release = [{ path = "/sys/kernel/cnss/fs_ready", value = "0" }]
 # "Failed to probe host driver, err = -1"，wlan0 永远不出现。
 firmware = [
     { name = "wlan/qca_cld/peach_v2/WCNSS_qcom_cfg.ini", path = "/vendor/etc/wifi/peach_v2/WCNSS_qcom_cfg.ini" },
-    { name = "wlan/qca_cld/peach_v2/wlan_mac.bin", path = "/mnt/vendor/persist/wlan/wlan_mac.bin" },
+    { name = "wlan/qca_cld/peach_v2/wlan_mac.bin", path = "/mnt/vendor/persist/wlan/wlan_mac.bin", optional = true },
 ]
 interface = "wlan0"
 supplicant = "/vendor/bin/hw/wpa_supplicant"
