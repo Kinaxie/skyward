@@ -8,6 +8,7 @@ use skyward_crypto::data::{self, Closed, Opening};
 use skyward_crypto::keymint::KeyMint;
 use skyward_sys::worker::Worker;
 use std::os::fd::RawFd;
+use std::path::Path;
 
 pub enum Job {
     /// Open the partition as far as it opens with nothing a user knows.
@@ -54,6 +55,28 @@ impl Decryptor {
     }
 }
 
+/// What the phone holds where the key service is reached, said beside why
+/// it was not: which programs of the service directories run, and where
+/// their own programs are.
+fn key_diagnostics() -> String {
+    let running = |name: &str| {
+        std::fs::read_dir("/proc").ok().into_iter().flatten().flatten().any(|entry| {
+            entry.file_name().to_string_lossy().bytes().all(|byte| byte.is_ascii_digit())
+                && std::fs::read(entry.path().join("cmdline")).is_ok_and(|bytes| String::from_utf8_lossy(&bytes).contains(name))
+        })
+    };
+    let at = |path: &str| if Path::new(path).is_file() { "there" } else { "missing" };
+    format!(
+        "\n[binder={} servicemanager={} hwservicemanager={} keymint={} servicemanager_bin={} keymint_bin={}]",
+        if Path::new("/dev/binder").exists() { "there" } else { "missing" },
+        if running("servicemanager") { "running" } else { "not running" },
+        if running("hwservicemanager") { "running" } else { "not running" },
+        if running("keymint") { "running" } else { "not running" },
+        at("/mnt/system/bin/servicemanager"),
+        at("/vendor/bin/hw/android.hardware.security.keymint-service-qti"),
+    )
+}
+
 /// Do `work` with the phone's key service, reached afresh for it, and say
 /// why it failed in words for the page.
 pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T, String> {
@@ -62,7 +85,7 @@ pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T
         let service = KeyMint::open(&binder)?;
         work(&service)
     })();
-    done.map_err(|e| format!("{e:#}"))
+    done.map_err(|e| format!("{e:#}{}", key_diagnostics()))
 }
 
 /// Do `work` with what reaching the data partition takes: the phone's key
@@ -79,5 +102,5 @@ pub fn with_data_keys<T>(work: impl FnOnce(Option<&KeyMint>) -> Result<T>) -> Re
         let service = KeyMint::open(&binder)?;
         work(Some(&service))
     })();
-    done.map_err(|e| format!("{e:#}"))
+    done.map_err(|e| format!("{e:#}{}", key_diagnostics()))
 }
