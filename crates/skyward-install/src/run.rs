@@ -646,7 +646,7 @@ fn reflash(ctx: &Context, kept: &Kept, next: Result<Slot>) {
     });
     let _ = kmsg(&format!("install: this recovery written back to {slots:?}: {written:?}"));
     ctx.send(Event::Reflashed(match written {
-        Ok(()) => Reflash::Written(slots),
+        Ok(written) => Reflash::Written(written),
         Err(e) => Reflash::Failed(format!("{e:#}")),
     }));
 }
