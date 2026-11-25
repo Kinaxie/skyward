@@ -2410,6 +2410,7 @@ impl Pages<'_> {
                     Work::Update(update) => (installed, script_cache || (installed && update.wipe_cache)),
                     _ => (false, script_cache),
                 };
+                let leave_wanted = leaves;
                 let auto_root = match auto_slots.split_first() {
                     Some((first, rest)) => {
                         let started = self.start_auto_root(*first, now)?;
@@ -2448,7 +2449,7 @@ impl Pages<'_> {
                         Ok(merger) => {
                             self.merger = Some(merger);
                             self.app.set_update(Standing::Merging(0.0));
-                            self.merge_leaves = self.auto_root_leaves || leaves;
+                            self.merge_leaves = leave_wanted;
                             leaves = false;
                         }
                         Err(e) => {
