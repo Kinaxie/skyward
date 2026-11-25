@@ -149,12 +149,10 @@ pub fn collect(cfg: &DeviceConfig) -> Result<DeviceInfo> {
 /// cannot be read, as the pages do when they come up.
 pub fn collect_with(cfg: &DeviceConfig, battery: Option<Battery>) -> Result<DeviceInfo> {
     let d = &cfg.display;
-    let unlocked = match skyward_block::boot_param("androidboot.vbmeta.device_state")?.as_deref() {
-        None => None,
-        Some("locked") => Some(false),
-        Some("unlocked") => Some(true),
-        Some(other) => bail!("androidboot.vbmeta.device_state {other:?}"),
-    };
+    let flash = skyward_block::boot_param("androidboot.flash.locked")?;
+    let vbmeta = skyward_block::boot_param("androidboot.vbmeta.device_state")?;
+    let verified = skyward_block::boot_param("androidboot.verifiedbootstate")?;
+    let unlocked = unlocked(flash.as_deref(), vbmeta.as_deref(), verified.as_deref());
     let system = SystemProps::current()?;
     Ok(DeviceInfo {
         // The system names the exact edition; the configured model covers a
@@ -176,8 +174,22 @@ pub fn collect_with(cfg: &DeviceConfig, battery: Option<Battery>) -> Result<Devi
         battery,
         slot: skyward_vab::current_slot()?,
         snapshot: skyward_vab::snapshot_state()?,
-        boot: Boot { unlocked, verified: skyward_block::boot_param("androidboot.verifiedbootstate")? },
+        boot: Boot { unlocked, verified },
     })
+}
+
+/// Whether the bootloader lets its boot images be written, from the names
+/// it leaves in its parameters: the state it names, or the colour it
+/// booted in where it names no state. Orange and red are a phone whose own
+/// keys it no longer checks, which is what unlocking it makes.
+fn unlocked(flash_locked: Option<&str>, vbmeta: Option<&str>, verified: Option<&str>) -> Option<bool> {
+    if flash_locked == Some("0") || vbmeta == Some("unlocked") || matches!(verified, Some("orange") | Some("red")) {
+        return Some(true);
+    }
+    if flash_locked == Some("1") || vbmeta == Some("locked") || matches!(verified, Some("green") | Some("yellow")) {
+        return Some(false);
+    }
+    None
 }
 
 /// The property Android keeps its time zone under, by the zone's name in
@@ -482,6 +494,18 @@ mod tests {
         assert_eq!(cpulist("0").unwrap(), vec![0]);
         assert!(cpulist("3-1").is_err());
         assert!(cpulist("").is_err());
+    }
+
+    #[test]
+    fn the_bootloader_unlocked_state_is_read_from_any_name_the_phone_gives_it() {
+        assert_eq!(unlocked(Some("0"), None, None), Some(true));
+        assert_eq!(unlocked(None, Some("unlocked"), None), Some(true));
+        assert_eq!(unlocked(None, None, Some("orange")), Some(true));
+        assert_eq!(unlocked(None, None, Some("red")), Some(true));
+        assert_eq!(unlocked(Some("1"), None, None), Some(false));
+        assert_eq!(unlocked(None, Some("locked"), None), Some(false));
+        assert_eq!(unlocked(None, None, Some("green")), Some(false));
+        assert_eq!(unlocked(None, None, None), None, "a phone that names none of them leaves it unknown");
     }
 
     #[test]

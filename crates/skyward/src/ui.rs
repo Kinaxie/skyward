@@ -1126,7 +1126,7 @@ fn installed(cfg: &DeviceConfig, info: &skyward_info::DeviceInfo) -> Result<Inst
         device: prop("ro.product.mod_device")?,
         version: prop(&cfg.device.os_version_prop)?,
         android: prop("ro.build.version.release")?,
-        unlocked: skyward_block::boot_param("androidboot.flash.locked")?.as_deref() == Some("0"),
+        unlocked: info.boot.unlocked.unwrap_or(false),
     })
 }
 
@@ -1824,7 +1824,7 @@ impl<'a> Pages<'a> {
         let slot = skyward_vab::current_slot().map_err(|e| format!("{e:#}"))?.ok_or("not an A/B phone")?;
         let suffix = if slot == skyward_vab::Slot::A { "_a" } else { "_b" };
         let state = skyward_install::avb::read(Path::new(skyward_block::BY_NAME), suffix).map_err(|e| format!("{e:#}"))?;
-        let unlocked = skyward_block::boot_param("androidboot.flash.locked").ok().flatten().as_deref() == Some("0");
+        let unlocked = self.info.boot.unlocked.unwrap_or(false);
         let (verity, verification) = (state.verity_enabled(), state.verification_enabled());
         Ok(skyward_ui::app::AvbStatus { partition: state.partition, verity, verification, unlocked })
     }
@@ -1832,7 +1832,7 @@ impl<'a> Pages<'a> {
     /// Write the flags to both slots, as the AVB page asks, and read the
     /// running slot back.
     fn set_avb(&self, verity: bool, verification: bool) -> Result<skyward_ui::app::AvbStatus, String> {
-        let unlocked = skyward_block::boot_param("androidboot.flash.locked").ok().flatten().as_deref() == Some("0");
+        let unlocked = self.info.boot.unlocked.unwrap_or(false);
         if !unlocked {
             return Err("the bootloader is locked; vbmeta is not written".into());
         }
