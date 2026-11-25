@@ -38,6 +38,11 @@ writes = [{ path = "/sys/class/touch/touch_dev/enable_touch_raw", value = "0" }]
 # down and sets how the memory bus scales. Without it the CPUs stay at
 # their highest clock and voltage even while idle, and the phone slowly
 # heats up.
+# The persist partition holds the WLAN MAC and what the vendor's DRM
+# libraries read; keep it mounted, as the phone does.
+[partitions]
+mounted = ["persist"]
+
 [[service]]
 path = "/vendor/bin/sh"
 args = ["/vendor/bin/init.kernel.post_boot.sh"]
