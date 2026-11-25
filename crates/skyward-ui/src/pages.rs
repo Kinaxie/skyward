@@ -662,7 +662,7 @@ pub fn avb_page(cx: &Ctx) -> Frame {
         let note = widgets::footnote(&mut c, t, f, y, said);
         y = note;
     }
-    let note = l.pick(texts::local::AVB_NOTE);
+    let note = l.pick(if s.avb_writable { texts::local::AVB_NOTE } else { texts::local::AVB_UNSUPPORTED });
     let y = widgets::footnote(&mut c, t, f, y, note);
     Frame::new(t, fit(c, t, y), out, "AVB", top)
 }

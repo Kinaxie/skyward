@@ -74,6 +74,10 @@ pub struct DeviceConfig {
     pub wipe: Wipe,
     #[serde(default)]
     pub backup: Backup,
+    /// Whether the bootloader takes the vbmeta flags written here, or
+    /// checks vbmeta itself whatever they say.
+    #[serde(default)]
+    pub avb: Avb,
     /// The phone's WLAN, on phones whose driver the recovery brings up.
     #[serde(default)]
     pub wlan: Option<Wlan>,
@@ -183,6 +187,22 @@ pub struct Firmware {
 pub struct Update {
     /// Where the questions are sent.
     pub server: String,
+}
+
+/// Whether the phone's bootloader takes the vbmeta flags a recovery writes.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Avb {
+    /// False where the bootloader checks vbmeta itself: a flag written here
+    /// leaves the phone at the bootloader instead of starting, so the flags
+    /// are only shown.
+    #[serde(default = "default_true")]
+    pub writable: bool,
+}
+
+impl Default for Avb {
+    fn default() -> Self {
+        Self { writable: true }
+    }
 }
 
 /// What a backup takes in and leaves out beyond what every Android phone

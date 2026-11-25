@@ -81,6 +81,12 @@ probe = "http://connect.rom.miui.com/generate_204"
 [update]
 server = "https://update.miui.com/updates/miotaV3.php"
 
+# The bootloader checks vbmeta itself: a flag a recovery writes leaves the
+# phone at the bootloader instead of starting. The AVB page shows the flags
+# and writes none of them.
+[avb]
+writable = false
+
 # The stock build the recovery is made on: the Chinese system's
 # OS4.0.4.0, whose full update package on the phone maker's own download
 # server holds the recovery partition the recovery is built on top of.

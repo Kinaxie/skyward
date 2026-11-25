@@ -107,6 +107,20 @@ impl App {
                 self.refresh();
             }
             Action::Toggle(switch) => {
+                if !self.state.avb_writable && matches!(switch, Switch::AvbVerity | Switch::AvbVerification) {
+                    let on = match switch {
+                        Switch::AvbVerity => self.state.avb_verity,
+                        Switch::AvbVerification => self.state.avb_verification,
+                        _ => false,
+                    };
+                    // Turning a check back on restores the flag bytes the
+                    // bootloader signed; turning one off is what leaves this
+                    // phone at the bootloader.
+                    if on {
+                        self.say(l.pick(texts::local::AVB_UNSUPPORTED), now);
+                        return Vec::new();
+                    }
+                }
                 let on = match switch {
                     Switch::Vibrate => &mut self.state.vibrate,
                     Switch::FileTransfer => &mut self.state.file_transfer,
@@ -1112,7 +1126,10 @@ impl App {
             Confirm::FactoryReset => fx.push(Effect::FactoryReset),
             Confirm::Avb => {
                 let unlocked = self.state.avb.as_ref().is_some_and(|s| s.as_ref().is_ok_and(|s| s.unlocked));
-                if unlocked {
+                if !self.state.avb_writable && (!self.state.avb_verity || !self.state.avb_verification) {
+                    self.state.avb_notice = Some(l.pick(texts::local::AVB_UNSUPPORTED).to_string());
+                    self.refresh();
+                } else if unlocked {
                     fx.push(Effect::SetAvb { verity: self.state.avb_verity, verification: self.state.avb_verification });
                 } else {
                     let why = l.pick(texts::local::AVB_LOCKED_REFUSAL);
@@ -1274,14 +1291,21 @@ mod tests {
     }
 
     #[test]
-    fn a_key_shows_held_down_while_touched() {
+    fn a_phone_whose_bootloader_checks_vbmeta_can_only_have_its_checks_turned_on() {
         let (f, i) = (fonts(), info());
-        let mut app = opened(Screen::Search, &f, &i);
-        let (x, y) = spot(&mut app, &f, &i, Action::Type(Cap::Char('q')));
-        app.touch(Touch::Down(x, y), &f, 0);
-        assert_eq!(app.state.key_held(), Some(Cap::Char('q')));
-        app.touch(Touch::Up, &f, 0);
-        assert_eq!(app.state.held, None);
-        assert_eq!(app.state.search, "q");
+        let mut app = App::new(Screen::Avb, W, H, PPD);
+        app.state.avb_writable = false;
+        app.set_avb(Ok(AvbStatus { partition: "vbmeta_b".into(), verity: false, verification: true, unlocked: true }));
+        assert!(app.act(Action::Toggle(Switch::AvbVerification), 0).is_empty(), "a check is not turned off here");
+        assert!(app.state.avb_verification);
+        assert!(app.act(Action::Toggle(Switch::AvbVerity), 0).is_empty());
+        assert!(app.state.avb_verity, "a check already off is turned back on");
+        assert_eq!(
+            app.confirmed(Confirm::Avb, 0),
+            vec![Effect::SetAvb { verity: true, verification: true }],
+            "the original flag bytes are put back"
+        );
+        let mut c = crate::Canvas::new(W, H);
+        app.compose(&mut c, &f, &i, "12:00", 0);
     }
 }
