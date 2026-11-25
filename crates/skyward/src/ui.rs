@@ -1517,6 +1517,7 @@ impl<'a> Pages<'a> {
             }
         };
         app.state.phone_logs = cfg.wipe.logs.len();
+        app.state.avb_writable = cfg.avb.writable;
         // Skyward lives in a recovery partition of each slot where the phone
         // has them, and the install page then offers to keep it there. Such a
         // phone holds a second system where it also has boot and init_boot
@@ -2315,6 +2316,7 @@ impl Pages<'_> {
         }
         if !succeeded {
             self.auto_root_slots.clear();
+            self.merge_leaves = false;
             if let Some(why) = failure {
                 self.app.root_failed(&why, now);
             }
@@ -2337,7 +2339,9 @@ impl Pages<'_> {
     /// The phone may leave once nothing else is writing: a merge the same
     /// install asked for keeps it here until it ends.
     fn leave_when_ready(&mut self, now: u64) {
-        if self.merger.is_some() {
+        if self.root_worker.is_some() || self.magisk_worker.is_some() {
+            self.auto_root_leaves = true;
+        } else if self.merger.is_some() {
             self.merge_leaves = true;
         } else if self.eraser.is_some() {
             self.erase_leaves = true;
@@ -2430,6 +2434,31 @@ impl Pages<'_> {
                 if cache_after && !self.app.state.cache_partition {
                     skyward_sys::kmsg("the install asked for the cache partition to be erased, and the phone has none")?;
                 }
+                // An update whose snapshots are not merged cannot start:
+                // merge it here and now when the install page asks, before
+                // the phone is let go, whether the request would have left
+                // at once or not.
+                if let Some(slot) = merge_slot
+                    && self.app.state.merge_after
+                    && !wipe_after
+                    && self.merger.is_none()
+                {
+                    skyward_sys::kmsg(&format!("merging the update in slot {} after the install", slot.letter()))?;
+                    match merge::Merger::start(slot, true) {
+                        Ok(merger) => {
+                            self.merger = Some(merger);
+                            self.app.set_update(Standing::Merging(0.0));
+                            self.merge_leaves = self.auto_root_leaves || leaves;
+                            leaves = false;
+                        }
+                        Err(e) => {
+                            // Leaving now would leave the new slot
+                            // unmerged, which is a phone that cannot start.
+                            self.app.report(&skyward_ui::fmt::merge_failed(self.app.state.lang, &format!("{e:#}")), now);
+                            leaves = false;
+                        }
+                    }
+                }
                 if wipe_after {
                     ensure!(self.eraser.is_none(), "erasing is under way already");
                     self.eraser = Some(factory_reset(&mut self.app, false, false, None)?);
@@ -2439,20 +2468,7 @@ impl Pages<'_> {
                     self.eraser = Some(parts_wipe(&mut self.app, vec![Step::Cache], &self.cfg.wipe.logs, false, None)?);
                     self.erase_leaves = leaves;
                 } else if leaves {
-                    self.leave_at = Some(now + LEAVE_AFTER_MS);
-                }
-                // An update installed from the pages is merged here and now,
-                // as the install page asks; one the system asked for leaves
-                // its merge to the system's first start.
-                if let Some(slot) = merge_slot
-                    && self.app.state.merge_after
-                    && !wipe_after
-                    && !leaves
-                    && self.merger.is_none()
-                {
-                    skyward_sys::kmsg(&format!("merging the update in slot {} after the install", slot.letter()))?;
-                    self.merger = Some(merge::Merger::start(slot, true)?);
-                    self.app.set_update(Standing::Merging(0.0));
+                    self.leave_when_ready(now);
                 }
                 // Rescue asked to come back is told so in misc, as
                 // Android's own recovery tells it.
@@ -2473,6 +2489,7 @@ impl Pages<'_> {
     fn eraser_told(&mut self, now: u64) -> Result<()> {
         let told = self.eraser.as_ref().map(Eraser::events).unwrap_or_default();
         let mut erased = false;
+        let mut leaves = false;
         for ev in told {
             match ev {
                 // Rescue's page says only that erasing is under way.
@@ -2513,7 +2530,7 @@ impl Pages<'_> {
                         bcb::clear(&self.misc)?;
                     }
                     if outcome.is_ok() && self.erase_leaves {
-                        self.leave_at = Some(now + LEAVE_AFTER_MS);
+                        leaves = true;
                     }
                     self.app.erase_ended(outcome.map_err(erase_stop), now);
                     // Users of a data partition erased whole have no
@@ -2530,6 +2547,10 @@ impl Pages<'_> {
         if erased {
             self.eraser = None;
             self.keeper.remade();
+            if leaves {
+                self.erase_leaves = false;
+                self.leave_when_ready(now);
+            }
         }
         Ok(())
     }
@@ -2644,10 +2665,14 @@ impl Pages<'_> {
     fn merge_told(&mut self, now: u64) -> Result<()> {
         let Some(m) = &self.merger else { return Ok(()) };
         let slot = self.info.slot.context("only an A/B phone merges an update")?;
+        let mut merged = false;
         for ev in m.events() {
             match ev {
                 merge::Event::Looked(look) => {
                     eprintln!("merge {look:?}");
+                    if matches!(look, Merge::Done | Merge::NeedsReboot) {
+                        merged = true;
+                    }
                     self.app.set_update(match look {
                         Merge::Going(done) => Standing::Merging(done),
                         Merge::Done | Merge::NeedsReboot => Standing::Merged,
@@ -2670,7 +2695,17 @@ impl Pages<'_> {
             read_details(self.cfg, &mut self.info, &mut self.unread.details)?;
             self.app.refresh();
             if std::mem::take(&mut self.merge_leaves) {
-                self.leave_when_ready(now);
+                // A merge that did not finish leaves the new slot unable to
+                // start; the phone stays here rather than restart into it,
+                // even where a root write of the same install is still to
+                // end.
+                if merged {
+                    self.leave_when_ready(now);
+                } else {
+                    self.auto_root_leaves = false;
+                    self.erase_leaves = false;
+                    skyward_sys::kmsg("the update is not merged, so the phone stays in the recovery")?;
+                }
             }
         }
         Ok(())
