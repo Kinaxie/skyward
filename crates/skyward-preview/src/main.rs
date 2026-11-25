@@ -437,7 +437,7 @@ fn main() -> Result<()> {
     let adding = |app: &mut App, name: &str, security: Security, field: Field, choosing: bool| {
         app.state.adding = Some(Adding { name: name.into(), security, field, choosing });
     };
-    let pages: [PageShot; 197] = [
+    let pages: [PageShot; 198] = [
         ("11-install-light-locked", Screen::Install, false, &|app| {
             app.state.data = Data::Locked { user: 0, keys: Keys::Digits, checking: false };
         }),
@@ -961,6 +961,10 @@ fn main() -> Result<()> {
         }),
         ("58-license-light", Screen::License, false, &|_| {}),
         ("59-font-license-light", Screen::FontLicense, false, &|_| {}),
+        ("212-avb-read-only-light", Screen::Avb, false, &|app| {
+            app.state.avb_writable = false;
+            app.set_avb(Ok(skyward_ui::app::AvbStatus { partition: "vbmeta_b".into(), verity: false, verification: true, unlocked: true }));
+        }),
         ("60-slot-dark", Screen::Slot, true, &|app| {
             app.set_boot_slots(Ok(BootSlots { active: Slot::B, bootable: [false, true], successful: [true, true] }));
             app.state.next_slot = Some(Slot::A);
