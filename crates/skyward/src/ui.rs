@@ -2455,6 +2455,8 @@ impl Pages<'_> {
                             // Leaving now would leave the new slot
                             // unmerged, which is a phone that cannot start.
                             self.app.report(&skyward_ui::fmt::merge_failed(self.app.state.lang, &format!("{e:#}")), now);
+                            self.auto_root_leaves = false;
+                            self.erase_leaves = false;
                             leaves = false;
                         }
                     }
@@ -3161,8 +3163,20 @@ impl Pages<'_> {
                 power(target)?
             }
             Effect::Dismiss => self.done_with_request()?,
-            Effect::FactoryReset => self.reset_asked(now)?,
-            Effect::Wipe(chosen) => self.wipe(chosen, now)?,
+            Effect::FactoryReset => {
+                if self.merger.is_some() {
+                    self.app.report_merging(now);
+                } else {
+                    self.reset_asked(now)?;
+                }
+            }
+            Effect::Wipe(chosen) => {
+                if self.merger.is_some() {
+                    self.app.report_merging(now);
+                } else {
+                    self.wipe(chosen, now)?;
+                }
+            }
             Effect::Install => self.installer.as_ref().context("no installer holds an update")?.install(),
             Effect::StartShell(folder) => self.start_shell(&folder, now)?,
             // A shell that will not take keys is the page's to report; the
