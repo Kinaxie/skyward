@@ -793,14 +793,14 @@ impl App {
             }
             Action::ModuleToggle(at) => {
                 if let Some(Ok(list)) = &self.state.modules
-                    && let Some(module) = list.get(at)
+                    && let Some(module) = list.get(at).filter(|module| module.editable)
                 {
                     return vec![Effect::ModuleSwitch { id: module.id.clone(), on: !module.enabled }];
                 }
             }
             Action::ModuleRemove(at) => {
                 if let Some(Ok(list)) = &self.state.modules
-                    && let Some(module) = list.get(at)
+                    && let Some(module) = list.get(at).filter(|module| module.editable)
                 {
                     return vec![Effect::ModuleRemove { id: module.id.clone(), on: !module.removing }];
                 }

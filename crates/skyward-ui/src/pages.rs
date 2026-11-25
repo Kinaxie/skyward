@@ -932,14 +932,16 @@ pub fn modules(cx: &Ctx) -> Frame {
         Some(Ok(list)) if list.is_empty() => rows.push(Row::new(l.pick(texts::modules::EMPTY))),
         Some(Ok(list)) => {
             for (at, m) in list.iter().enumerate() {
-                let sub = match (m.enabled, m.removing, m.pending, m.note.is_empty()) {
-                    (_, true, _, _) => l.pick(texts::modules::REMOVING),
-                    (true, false, true, _) => l.pick(texts::modules::PENDING),
-                    (false, false, _, _) => l.pick(texts::local::AVB_OFF),
-                    (true, false, false, false) => m.note.as_str(),
-                    (true, false, false, true) => m.about.as_str(),
+                let sub = match (m.editable, m.enabled, m.removing, m.pending, m.note.is_empty()) {
+                    (false, ..) => l.pick(texts::modules::READ_ONLY),
+                    (true, _, true, _, _) => l.pick(texts::modules::REMOVING),
+                    (true, true, false, true, _) => l.pick(texts::modules::PENDING),
+                    (true, false, false, _, _) => l.pick(texts::local::AVB_OFF),
+                    (true, true, false, false, false) => m.note.as_str(),
+                    (true, true, false, false, true) => m.about.as_str(),
                 };
-                rows.push(Row::new(&m.name).icon(BLUE, Icon::Layers).subtitle(sub).trail(Trail::Switch(m.enabled)));
+                let trail = if m.editable { Trail::Switch(m.enabled) } else { Trail::None };
+                rows.push(Row::new(&m.name).icon(BLUE, Icon::Layers).subtitle(sub).trail(trail));
                 opens.push(Action::ModuleOpen(at));
             }
         }
@@ -950,7 +952,7 @@ pub fn modules(cx: &Ctx) -> Frame {
     // touch target goes over the row: the switch turns it off and on, the
     // rest of the row opens it.
     for (at, row) in list.rows.iter().enumerate() {
-        if matches!(s.modules.as_ref(), Some(Ok(list)) if at < list.len()) {
+        if matches!(s.modules.as_ref(), Some(Ok(list)) if list.get(at).is_some_and(|m| m.editable)) {
             let w = t.m.dp(88.0);
             out.push(Hit { rect: Rect::new(row.x + row.w - w, row.y, w, row.h), action: Action::ModuleToggle(at) });
         }
@@ -983,6 +985,10 @@ pub fn module_info(cx: &Ctx) -> Frame {
         (l.pick(texts::common::LOCATION), format!("/data/adb/modules/{}", m.id)),
     ];
     let y = widgets::info_card(&mut c, t, f, top, &facts);
+    if !m.editable {
+        let y = widgets::footnote(&mut c, t, f, y + t.m.dp(10.0), l.pick(texts::modules::READ_ONLY));
+        return Frame::new(t, fit(c, t, y), Vec::new(), l.pick(texts::modules::TITLE), top);
+    }
     let switch_label = l.pick(if m.enabled { texts::modules::TURN_OFF } else { texts::modules::TURN_ON });
     let switched =
         widgets::list(&mut c, t, f, y + t.m.dp(10.0), &[Row::new(switch_label).icon(BLUE, Icon::Layers).trail(Trail::Switch(m.enabled))]);

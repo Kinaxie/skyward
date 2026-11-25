@@ -17,6 +17,9 @@ pub struct ModuleRow {
     pub removing: bool,
     /// A newer copy waits in `modules_update` for the next start.
     pub pending: bool,
+    /// Its markers can take effect at the next start; a module with a
+    /// staged copy or an early-boot state managed by Android cannot.
+    pub editable: bool,
 }
 
 impl App {
@@ -60,6 +63,7 @@ mod tests {
             enabled,
             removing: false,
             pending: false,
+            editable: true,
         }
     }
 
@@ -71,5 +75,20 @@ mod tests {
         assert!(tap(&mut app, &f, &i, Action::ModuleOpen(1)).is_empty());
         assert_eq!(app.screen(), Screen::ModuleInfo);
         assert_eq!(app.state.module_at, Some(1));
+    }
+
+    #[test]
+    fn a_module_whose_next_start_is_already_decided_is_read_only() {
+        let (f, i) = (fonts(), info());
+        let mut app = App::new(Screen::Modules, W, H, PPD);
+        let locked = ModuleRow { editable: false, ..row("a", true) };
+        app.set_modules(Ok(vec![locked]));
+        assert!(app.act(Action::ModuleToggle(0), 0).is_empty());
+        assert!(app.act(Action::ModuleRemove(0), 0).is_empty());
+        assert!(tap(&mut app, &f, &i, Action::ModuleOpen(0)).is_empty());
+        assert_eq!(app.screen(), Screen::ModuleInfo);
+        let mut c = crate::Canvas::new(W, H);
+        app.compose(&mut c, &f, &i, "12:00", 0);
+        assert!(app.act(Action::ModuleRemove(0), 0).is_empty());
     }
 }

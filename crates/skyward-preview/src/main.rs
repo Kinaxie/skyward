@@ -1623,6 +1623,7 @@ fn module_rows() -> Vec<ModuleRow> {
         enabled,
         removing: false,
         pending,
+        editable: !pending,
     })
     .collect()
 }
