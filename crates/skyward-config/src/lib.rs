@@ -197,11 +197,16 @@ pub struct Avb {
     /// are only shown.
     #[serde(default = "default_true")]
     pub writable: bool,
+    /// False where turning the bootloader's verification off leaves the
+    /// phone at the bootloader: dm-verity may still be turned off, which is
+    /// the flag a recovery writes to install over a verified system.
+    #[serde(default = "default_true")]
+    pub verification: bool,
 }
 
 impl Default for Avb {
     fn default() -> Self {
-        Self { writable: true }
+        Self { writable: true, verification: true }
     }
 }
 

@@ -55,6 +55,9 @@ pub struct State {
     pub avb_notice: Option<String>,
     /// Whether the phone's bootloader takes the flags this page writes.
     pub avb_writable: bool,
+    /// Whether its own verification may be turned off; dm-verity is not
+    /// this one.
+    pub avb_verification_writable: bool,
     /// What KernelSU and the phone say, and the KMI chosen to write.
     pub kernel_su: Option<Result<KernelSuStatus, String>>,
     pub kernel_su_kmi: Option<usize>,
@@ -290,6 +293,7 @@ impl Default for State {
             avb_verification: true,
             avb_notice: None,
             avb_writable: true,
+            avb_verification_writable: true,
             kernel_su: None,
             kernel_su_kmi: None,
             kernel_su_ko: None,

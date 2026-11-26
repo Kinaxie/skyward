@@ -1518,6 +1518,7 @@ impl<'a> Pages<'a> {
         };
         app.state.phone_logs = cfg.wipe.logs.len();
         app.state.avb_writable = cfg.avb.writable;
+        app.state.avb_verification_writable = cfg.avb.verification;
         // Skyward lives in a recovery partition of each slot where the phone
         // has them, and the install page then offers to keep it there. Such a
         // phone holds a second system where it also has boot and init_boot
