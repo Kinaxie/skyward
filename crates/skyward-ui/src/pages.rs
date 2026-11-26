@@ -642,12 +642,26 @@ pub fn avb_page(cx: &Ctx) -> Frame {
     let facts = widgets::list(&mut c, t, f, top, &[Row::new(status.as_str()).trail(Trail::None)]);
     let mut y = facts.bottom + t.m.dp(10.0);
     if matches!(s.avb.as_ref(), Some(Ok(_))) {
-        let rows = [
-            Row::new("dm-verity").trail(Trail::Switch(s.avb_verity)),
-            Row::new(l.pick(texts::local::AVB_BOOT_VERIFICATION)).trail(Trail::Switch(s.avb_verification)),
-        ];
+        let verity = if s.avb_writable {
+            Trail::Switch(s.avb_verity)
+        } else {
+            Trail::Value(l.pick(if s.avb_verity { texts::local::AVB_ON } else { texts::local::AVB_OFF }))
+        };
+        let verification = if s.avb_writable && s.avb_verification_writable {
+            Trail::Switch(s.avb_verification)
+        } else {
+            Trail::Value(l.pick(if s.avb_verification { texts::local::AVB_ON } else { texts::local::AVB_OFF }))
+        };
+        let rows = [Row::new("dm-verity").trail(verity), Row::new(l.pick(texts::local::AVB_BOOT_VERIFICATION)).trail(verification)];
         let switches = widgets::list(&mut c, t, f, y, &rows);
-        out.extend(hits(&switches.rows, &[Action::Toggle(Switch::AvbVerity), Action::Toggle(Switch::AvbVerification)]));
+        let mut actions = Vec::new();
+        if s.avb_writable {
+            actions.push(Action::Toggle(Switch::AvbVerity));
+        }
+        if s.avb_writable && s.avb_verification_writable {
+            actions.push(Action::Toggle(Switch::AvbVerification));
+        }
+        out.extend(hits(&switches.rows, &actions));
         y = switches.bottom;
     }
     if let Some(Ok(st)) = &s.avb

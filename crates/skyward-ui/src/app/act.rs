@@ -1322,6 +1322,9 @@ mod tests {
         let mut app = App::new(Screen::Avb, W, H, PPD);
         app.state.avb_verification_writable = false;
         app.set_avb(Ok(AvbStatus { partition: "vbmeta_b".into(), verity: true, verification: true, unlocked: true }));
+        let frame = app.frame(&f, &i);
+        assert!(frame.hits.iter().any(|hit| hit.action == Action::Toggle(Switch::AvbVerity)));
+        assert!(!frame.hits.iter().any(|hit| hit.action == Action::Toggle(Switch::AvbVerification)), "boot verification is a status, not a control");
         assert!(app.act(Action::Toggle(Switch::AvbVerification), 0).is_empty(), "boot verification is not turned off here");
         assert!(app.state.avb_verification);
         assert!(app.act(Action::Toggle(Switch::AvbVerity), 0).is_empty());
