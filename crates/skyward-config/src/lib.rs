@@ -1079,6 +1079,13 @@ mod tests {
     }
 
     #[test]
+    fn byron_takes_the_verity_flag_but_not_the_verification_flag() {
+        let cfg = DeviceConfig::parse(include_str!("../../../devices/byron.toml")).unwrap();
+        assert!(cfg.avb.writable);
+        assert!(!cfg.avb.verification, "the bootloader checks the boot image itself");
+    }
+
+    #[test]
     fn socrates_brings_its_wlan_up_without_a_mac_address_in_persist() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/socrates.toml")).unwrap();
         let ishtar = DeviceConfig::parse(include_str!("../../../devices/ishtar.toml")).unwrap().wlan.unwrap();
